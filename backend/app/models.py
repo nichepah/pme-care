@@ -189,6 +189,10 @@ class Examination(Base, AuditMixin):
         # employee can accumulate any number of completed/cancelled ones.
         Index("uq_examinations_one_open_per_employee", "employee_id", unique=True,
               postgresql_where=text("status = 'SCHEDULED'")),
+        # Backs the due/overdue compliance query, which reads only completed
+        # examinations and only by due date.
+        Index("ix_examinations_next_due", "next_due_date",
+              postgresql_where=text("status = 'COMPLETED'")),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -200,6 +204,11 @@ class Examination(Base, AuditMixin):
                                                nullable=False, default=ExamStatus.SCHEDULED)
     scheduled_date: Mapped[date] = mapped_column(Date, nullable=False)
     exam_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # When the *following* PME falls due. Set on completion, from the outcome's
+    # validity period or the doctor's explicit recall date. Stored rather than
+    # derived so that a later change to the configured intervals cannot silently
+    # move dates a doctor already committed to.
+    next_due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     fitness_status: Mapped[FitnessStatus | None] = mapped_column(
         Enum(FitnessStatus, name="fitness_status"), nullable=True)
     bp_systolic: Mapped[int | None] = mapped_column(nullable=True)

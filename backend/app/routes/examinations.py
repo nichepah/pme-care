@@ -19,6 +19,7 @@ from app.db import get_db
 from app.lookups import flush_or_conflict, parse_uuid
 from app.models import STAFF_ROLES, Employee, Examination, ExamStatus, FitnessStatus, User, UserRole, record_audit
 from app.paging import PageParams, page_params, paginate
+from app.periodicity import next_due_date
 from app.schemas import ExaminationCancel, ExaminationComplete, ExaminationCreate, ExaminationOut, Page
 
 router = APIRouter(prefix="/examinations", tags=["examinations"])
@@ -39,7 +40,7 @@ def exam_to_out(x: Examination) -> ExaminationOut:
         fitness_status=x.fitness_status, bp_systolic=x.bp_systolic, bp_diastolic=x.bp_diastolic,
         height_cm=float(x.height_cm) if x.height_cm is not None else None,
         weight_kg=float(x.weight_kg) if x.weight_kg is not None else None,
-        remarks=x.remarks, cancel_reason=x.cancel_reason,
+        remarks=x.remarks, cancel_reason=x.cancel_reason, next_due_date=x.next_due_date,
     )
 
 
@@ -184,12 +185,16 @@ def complete_examination(examination_id: str, body: ExaminationComplete,
     exam.height_cm = body.height_cm
     exam.weight_kg = body.weight_kg
     exam.remarks = body.remarks
+    # Completing an examination is what starts the next cycle — this is where the
+    # employee re-enters (or leaves) the due list.
+    exam.next_due_date = next_due_date(body.fitness_status, exam.exam_date, body.next_due_date)
     exam.updated_by = user.id
     db.flush()
     # Field NAMES only in the audit summary — never the clinical values (SEC-8).
     record_audit(db, user, "UPDATE", "examination", exam.id,
                  summary={"fields_changed": ["status", "fitness_status", "bp_systolic",
-                                             "bp_diastolic", "height_cm", "weight_kg", "remarks"]})
+                                             "bp_diastolic", "height_cm", "weight_kg",
+                                             "remarks", "next_due_date"]})
     return exam_to_out(exam)
 
 

@@ -213,6 +213,21 @@ class ExaminationOut(BaseModel):
     weight_kg: float | None
     remarks: str | None
     cancel_reason: str | None
+    next_due_date: date | None
+
+
+class EmployeeDue(EmployeeOut):
+    """One row of the compliance worklist: an employee who needs booking.
+
+    ``days_overdue`` is positive when the due date has passed, negative when it
+    is still ahead, and None when there is nothing to count from — a
+    never-examined employee, who is due immediately by definition.
+    """
+
+    last_exam_date: date | None
+    next_due_date: date | None
+    days_overdue: int | None
+    never_examined: bool
 
 
 class ExaminationComplete(BaseModel):
@@ -224,6 +239,10 @@ class ExaminationComplete(BaseModel):
     height_cm: float | None = Field(default=None, gt=0, le=999.9)
     weight_kg: float | None = Field(default=None, gt=0, le=999.9)
     remarks: str | None = None
+    next_due_date: date | None = Field(
+        default=None,
+        description="Explicit recall date. Overrides the interval implied by the "
+                    "outcome — a clinician's judgement beats the schedule.")
 
 
 class ExaminationCancel(BaseModel):

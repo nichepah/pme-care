@@ -24,6 +24,14 @@ class Settings(BaseSettings):
     # Where a newly provisioned user lands after following their sign-in link.
     SIGN_IN_CONTINUE_URL: str = "http://localhost:5173/"
 
+    # How long a fitness outcome stays valid, i.e. the PME cycle length. An
+    # UNFIT outcome deliberately has no interval — see app/periodicity.py.
+    PME_VALIDITY_MONTHS_FIT: int = 12
+    PME_VALIDITY_MONTHS_TEMPORARY: int = 3
+    # A PME counts as "coming up" this many days before it is due, which is the
+    # window the Health Team books from.
+    PME_DUE_SOON_DAYS: int = 30
+
     ALLOWED_ORIGINS: str = "http://localhost:5173"  # comma-separated
     GCS_BUCKET: str = "pme-care-attachments"
 

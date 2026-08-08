@@ -7,9 +7,10 @@ account, never by trusting an id in the URL.
 """
 
 import uuid
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import Select, or_, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.auth import (
@@ -29,6 +30,7 @@ from app.provisioning import get_provisioner
 from app.routes.examinations import exam_to_out
 from app.schemas import (
     EmployeeCreate,
+    EmployeeDue,
     EmployeeLoginOut,
     EmployeeOut,
     EmployeeStatus,
@@ -139,6 +141,82 @@ def list_employees(q: str | None = Query(None, max_length=100,
         stmt = stmt.where(Employee.plant == plant)
     stmt = stmt.where(Employee.is_active.is_(True if is_active is None else is_active))
     return paginate(db, stmt.order_by(Employee.full_name, Employee.id), params, _to_out)
+
+
+@router.get("/due", response_model=Page[EmployeeDue])
+def list_employees_due(within_days: int | None = Query(
+                           None, ge=0, le=365,
+                           description="Include PMEs falling due within this many days "
+                                       "(default: PME_DUE_SOON_DAYS)"),
+                       overdue_only: bool = Query(False, description="Exclude the not-yet-due"),
+                       department: str | None = Query(None, max_length=120),
+                       plant: str | None = Query(None, max_length=120),
+                       params: PageParams = Depends(page_params),
+                       user: CurrentUser = Depends(require_roles(*STAFF_ROLES)),
+                       db: Session = Depends(get_db)) -> Page[EmployeeDue]:
+    """Who needs a PME booked, most overdue first — the compliance worklist.
+
+    Three kinds of employee appear: never examined (due immediately), due within
+    the window, and overdue. Anyone who already has an examination SCHEDULED is
+    excluded — they have been dealt with, and leaving them in would mean booking
+    them twice.
+
+    Route order matters: this is declared before ``/{employee_id}`` so that
+    "due" is not swallowed as an employee id.
+    """
+    window_days = settings.PME_DUE_SOON_DAYS if within_days is None else within_days
+    today = date.today()
+    cutoff = today if overdue_only else today + timedelta(days=window_days)
+
+    # Latest completed examination per employee. A window function is the honest
+    # way to say "most recent": ordering by exam_date and breaking ties on
+    # created_at keeps two examinations recorded on the same day deterministic.
+    ranked = select(
+        Examination.employee_id.label("employee_id"),
+        Examination.exam_date.label("exam_date"),
+        Examination.next_due_date.label("next_due_date"),
+        func.row_number().over(
+            partition_by=Examination.employee_id,
+            order_by=(Examination.exam_date.desc(), Examination.created_at.desc()),
+        ).label("rn"),
+    ).where(Examination.status == ExamStatus.COMPLETED).subquery()
+    latest = select(ranked).where(ranked.c.rn == 1).subquery()
+
+    already_booked = (select(Examination.id)
+                      .where(Examination.employee_id == Employee.id,
+                             Examination.status == ExamStatus.SCHEDULED)
+                      .exists())
+
+    stmt = (select(Employee, latest.c.exam_date, latest.c.next_due_date)
+            .outerjoin(latest, latest.c.employee_id == Employee.id)
+            .where(Employee.deleted_at.is_(None), Employee.is_active.is_(True),
+                   ~already_booked,
+                   # Never examined, or the due date has arrived. An UNFIT
+                   # outcome leaves next_due_date NULL, which deliberately keeps
+                   # the employee out of the routine list — that is a case to
+                   # manage, not a booking to make.
+                   or_(latest.c.employee_id.is_(None), latest.c.next_due_date <= cutoff)))
+    if department:
+        stmt = stmt.where(Employee.department == department)
+    if plant:
+        stmt = stmt.where(Employee.plant == plant)
+    # Nulls first: never-examined employees are the most overdue of all.
+    stmt = stmt.order_by(latest.c.next_due_date.asc().nulls_first(), Employee.full_name)
+
+    total = db.execute(select(func.count()).select_from(stmt.order_by(None).subquery())).scalar_one()
+    rows = db.execute(stmt.limit(params.size).offset(params.offset)).all()
+    return Page(items=[_to_due(employee, exam_date, due, today)
+                       for employee, exam_date, due in rows],
+                total=total, page=params.page, size=params.size)
+
+
+def _to_due(employee: Employee, last_exam_date: date | None,
+            due: date | None, today: date) -> EmployeeDue:
+    """Build one compliance row, with the overdue count worked out."""
+    return EmployeeDue(**_to_out(employee).model_dump(),
+                       last_exam_date=last_exam_date, next_due_date=due,
+                       days_overdue=(today - due).days if due is not None else None,
+                       never_examined=last_exam_date is None)
 
 
 @router.get("/{employee_id}", response_model=EmployeeStatus)
