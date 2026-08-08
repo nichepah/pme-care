@@ -15,9 +15,10 @@ from sqlalchemy.orm import Session
 
 from app.auth import ConflictError, CurrentUser, ForbiddenError, NotFoundError, require_roles
 from app.db import get_db
-from app.lookups import flush_or_conflict, parse_uuid, require_dev_account_mode, unique_dev_uid
+from app.lookups import flush_or_conflict, parse_uuid
 from app.models import User, UserRole, record_audit, utcnow
 from app.paging import PageParams, page_params, paginate
+from app.provisioning import get_provisioner
 from app.schemas import Page, UserCreate, UserCreatedOut, UserOut, UserUpdate
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -46,23 +47,26 @@ def create_user(body: UserCreate,
                 db: Session = Depends(get_db)) -> UserCreatedOut:
     """Provision a staff account (Doctor / Health Team / Admin).
 
-    DEV-MODE ONLY — the ``firebase_uid`` is synthesized rather than created in
-    Firebase, so the returned token only works while AUTH_FAKE_MODE is on. See
-    ``require_dev_account_mode``.
+    Works in both modes. In production the identity is created in Firebase with
+    no password and the response carries a sign-in link for the new user; in
+    AUTH_FAKE_MODE the uid is synthesized and doubles as a working bearer token.
+    Either way this service never handles a password.
     """
-    require_dev_account_mode("account creation")
     clash = db.execute(select(User).where(User.email == body.email,
                                           User.deleted_at.is_(None))).scalar_one_or_none()
     if clash is not None:
         raise ConflictError(f"An account with e-mail {body.email} already exists.")
 
-    uid = unique_dev_uid(db, body.role.value.lower().replace("_", "-"), body.display_name)
-    account = User(firebase_uid=uid, email=body.email, role=body.role,
+    identity = get_provisioner(body.role.value.lower().replace("_", "-")).create(
+        db, email=body.email, display_name=body.display_name)
+    account = User(firebase_uid=identity.firebase_uid, email=body.email, role=body.role,
                    display_name=body.display_name, created_by=user.id)
     db.add(account)
     flush_or_conflict(db)   # the e-mail pre-check above can be raced
     record_audit(db, user, "CREATE", "user", account.id, summary={"role": account.role.value})
-    return UserCreatedOut(**_to_out(account).model_dump(), dev_bearer_token=uid)
+    return UserCreatedOut(**_to_out(account).model_dump(),
+                          dev_bearer_token=identity.dev_bearer_token,
+                          sign_in_link=identity.sign_in_link)
 
 
 @router.get("", response_model=Page[UserOut])
@@ -129,3 +133,7 @@ def delete_user(user_id: str, user: CurrentUser = Depends(require_roles(UserRole
     account.is_active = False
     record_audit(db, user, "SOFT_DELETE", "user", account.id)
     db.flush()
+    # Local deactivation already blocks this API. Disabling the identity as well
+    # stops a live session minting fresh ID tokens for anything else sharing the
+    # Firebase project.
+    get_provisioner().revoke(account.firebase_uid)

@@ -5,40 +5,34 @@ from types import SimpleNamespace
 from app.models import UserRole
 
 
-def _disable_fake_mode(monkeypatch):
-    """Turn off AUTH_FAKE_MODE for the dev-account guard only.
+def test_created_account_carries_a_token_in_fake_mode(client, make_user, auth):
+    """Locally the uid doubles as the bearer token, so the account is usable at
+    once and no sign-in link is needed."""
+    admin = make_user(role=UserRole.ADMIN, uid="adm-fake")
+    body = client.post("/api/v1/users", headers=auth(admin),
+                       json={"email": "fake@example.com", "display_name": "Fake Doc",
+                             "role": "DOCTOR"}).json()
+    assert body["dev_bearer_token"]
+    assert body["sign_in_link"] is None
+    assert client.get("/api/v1/me", headers=auth(body["dev_bearer_token"])).status_code == 200
 
-    The flag also drives token verification, so flipping it on the real
-    settings object would send the request to Firebase and fail as a 401 before
-    the guard is ever reached. Replacing the reference the guard reads isolates
-    the branch under test.
+
+def test_employee_login_requires_an_email_in_production(client, make_user, register, auth,
+                                                        monkeypatch):
+    """Without an address there is nowhere to send the sign-in link, so the
+    employee could never prove who they are.
+
+    Only the flag the route reads is patched: flipping it on the shared settings
+    object would also switch token verification to Firebase and fail the request
+    as a 401 long before this rule is reached.
     """
-    monkeypatch.setattr("app.lookups.settings", SimpleNamespace(AUTH_FAKE_MODE=False))
-
-
-def test_account_creation_is_refused_outside_fake_mode(client, make_user, auth, monkeypatch):
-    """A synthesized firebase_uid matches no Firebase account, so nobody could
-    sign in with it — the endpoint refuses rather than creating a dead login."""
-    admin = make_user(role=UserRole.ADMIN, uid="adm-prod")
-    _disable_fake_mode(monkeypatch)
-
-    r = client.post("/api/v1/users", headers=auth(admin),
-                    json={"email": "prod@example.com", "display_name": "Prod", "role": "DOCTOR"})
-    assert r.status_code == 422
-    assert r.json()["error"]["code"] == "BUSINESS_RULE_VIOLATION"
-    assert "AUTH_FAKE_MODE" in r.json()["error"]["message"]
-
-
-def test_employee_login_creation_is_refused_outside_fake_mode(client, make_user, register, auth,
-                                                              monkeypatch):
-    """Same guard on the employee-login endpoint."""
-    ht = make_user(role=UserRole.HEALTH_TEAM, uid="ht-prod")
-    employee = register(client, ht, "P-PROD")
-    _disable_fake_mode(monkeypatch)
+    ht = make_user(role=UserRole.HEALTH_TEAM, uid="ht-noemail")
+    employee = register(client, ht, "P-NOMAIL")     # registered without an e-mail
+    monkeypatch.setattr("app.routes.employees.settings", SimpleNamespace(AUTH_FAKE_MODE=False))
 
     r = client.post(f"/api/v1/employees/{employee['id']}/login", headers=auth(ht))
     assert r.status_code == 422
-    assert r.json()["error"]["code"] == "BUSINESS_RULE_VIOLATION"
+    assert r.json()["error"]["details"][0]["field"] == "email"
 
 
 def test_admin_creates_a_working_doctor_account(client, make_user, auth):

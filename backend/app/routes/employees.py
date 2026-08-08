@@ -12,11 +12,20 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import Select, or_, select
 from sqlalchemy.orm import Session
 
-from app.auth import ConflictError, CurrentUser, NotFoundError, get_current_user, require_roles
+from app.auth import (
+    BusinessRuleError,
+    ConflictError,
+    CurrentUser,
+    NotFoundError,
+    get_current_user,
+    require_roles,
+)
+from app.config import settings
 from app.db import get_db
-from app.lookups import flush_or_conflict, parse_uuid, require_dev_account_mode, unique_dev_uid
+from app.lookups import flush_or_conflict, parse_uuid
 from app.models import STAFF_ROLES, Employee, Examination, ExamStatus, User, UserRole, record_audit, utcnow
 from app.paging import PageParams, page_params, paginate
+from app.provisioning import get_provisioner
 from app.routes.examinations import exam_to_out
 from app.schemas import (
     EmployeeCreate,
@@ -223,16 +232,24 @@ def create_employee_login(employee_id: str,
     """Create a login for an employee and link it, closing the gap between
     "registered" and "can view their own status" (EMP-5).
 
-    DEV-MODE ONLY — see ``require_dev_account_mode``. In production this body
-    must be replaced by a real Firebase account-creation + invite flow.
+    Needs the employee's e-mail address in production: that is where the sign-in
+    link goes, and without one there is no way for them to prove who they are.
+    In AUTH_FAKE_MODE a placeholder address is enough, since the returned token
+    authenticates directly.
     """
-    require_dev_account_mode("login creation")
     employee = _load(db, employee_id, user)
     if employee.user_id is not None:
         raise ConflictError("This employee already has a login.")
+    if not employee.email and not settings.AUTH_FAKE_MODE:
+        raise BusinessRuleError(
+            "This employee has no e-mail address, so a sign-in link cannot be sent. "
+            "Add one first.", details=[{"field": "email", "issue": "required for login"}])
 
-    uid = unique_dev_uid(db, "emp", employee.personal_number)
-    account = User(firebase_uid=uid, email=employee.email or f"{uid}@example.local",
+    identity = get_provisioner("emp").create(
+        db, email=employee.email or f"emp-{employee.personal_number}@example.local",
+        display_name=employee.full_name)
+    account = User(firebase_uid=identity.firebase_uid,
+                   email=employee.email or f"{identity.firebase_uid}@example.local",
                    role=UserRole.EMPLOYEE, display_name=employee.full_name, created_by=user.id)
     db.add(account)
     # Flush before reading account.id — the primary key is assigned on INSERT,
@@ -248,4 +265,5 @@ def create_employee_login(employee_id: str,
     record_audit(db, user, "UPDATE", "employee", employee.id,
                  summary={"fields_changed": ["user_id"]})
     return EmployeeLoginOut(employee_id=str(employee.id), user_id=str(account.id),
-                            dev_bearer_token=uid)
+                            dev_bearer_token=identity.dev_bearer_token,
+                            sign_in_link=identity.sign_in_link)

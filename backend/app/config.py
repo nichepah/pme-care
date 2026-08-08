@@ -21,6 +21,8 @@ class Settings(BaseSettings):
 
     FIREBASE_PROJECT_ID: str = "pme-care-dev"
     AUTH_FAKE_MODE: bool = False                   # dev/test only: token == uid
+    # Where a newly provisioned user lands after following their sign-in link.
+    SIGN_IN_CONTINUE_URL: str = "http://localhost:5173/"
 
     ALLOWED_ORIGINS: str = "http://localhost:5173"  # comma-separated
     GCS_BUCKET: str = "pme-care-attachments"

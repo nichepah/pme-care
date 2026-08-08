@@ -101,9 +101,18 @@ class UserOut(BaseModel):
 
 
 class UserCreatedOut(UserOut):
-    """POST /users response: the account plus its dev-mode bearer token."""
+    """POST /users response: the account plus how its owner gets in.
 
-    dev_bearer_token: str
+    Exactly one of the two is populated. ``dev_bearer_token`` appears only in
+    AUTH_FAKE_MODE, where a uid authenticates directly; in production the user
+    follows ``sign_in_link`` and chooses their own credential, so this service
+    never holds one. ``sign_in_link`` may also be None if the provider created
+    the account but could not generate a link — the account is still valid and
+    the normal e-mail sign-in flow works.
+    """
+
+    dev_bearer_token: str | None = None
+    sign_in_link: str | None = None
 
 
 # --- Employees --------------------------------------------------------------
@@ -166,11 +175,16 @@ class EmployeeStatus(EmployeeOut):
 
 
 class EmployeeLoginOut(BaseModel):
-    """Response of POST /employees/{id}/login (dev-mode account creation)."""
+    """Response of POST /employees/{id}/login.
+
+    Same two-mode contract as ``UserCreatedOut``: a working token in fake mode,
+    a sign-in link in production.
+    """
 
     employee_id: str
     user_id: str
-    dev_bearer_token: str
+    dev_bearer_token: str | None = None
+    sign_in_link: str | None = None
 
 
 # --- Examinations -----------------------------------------------------------
