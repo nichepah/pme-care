@@ -47,9 +47,9 @@ jobs:
       ENV: test
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           # Matches the Dockerfile's runtime, so CI cannot pass on a version
           # production does not run.
@@ -83,7 +83,7 @@ jobs:
     # test job would catch its absence.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build the image
         run: docker build -t pme-care-api:ci backend
