@@ -219,6 +219,41 @@ def test_bootstrap_refuses_a_taken_email(make_user, capsys):
     assert "already registered" in capsys.readouterr().err
 
 
+def test_seed_script_refuses_outside_development(monkeypatch):
+    """The demo uids are published in a public repository.
+
+    They cannot authenticate while AUTH_FAKE_MODE is off, but seeding them into a
+    real database would leave rows that become working logins with
+    publicly-known credentials the moment somebody flipped that flag.
+    """
+    from scripts.seed_dev import refuse_if_not_development
+
+    assert refuse_if_not_development() is None            # the test environment
+
+    monkeypatch.setattr("scripts.seed_dev.settings",
+                        SimpleNamespace(is_production=True, AUTH_FAKE_MODE=True))
+    assert "ENV=production" in refuse_if_not_development()
+
+    # Either signal alone is enough: a non-production ENV with real auth on is
+    # still a deployment where these rows have no business existing.
+    monkeypatch.setattr("scripts.seed_dev.settings",
+                        SimpleNamespace(is_production=False, AUTH_FAKE_MODE=False))
+    assert "AUTH_FAKE_MODE=false" in refuse_if_not_development()
+
+
+def test_seed_script_exits_nonzero_when_refusing(monkeypatch, capsys):
+    """It must fail loudly, so a deploy script cannot seed demo accounts and
+    carry on as though nothing happened."""
+    import scripts.seed_dev as seed
+
+    monkeypatch.setattr(seed, "settings",
+                        SimpleNamespace(is_production=True, AUTH_FAKE_MODE=True))
+    with pytest.raises(SystemExit) as exited:
+        seed.run()
+    assert exited.value.code == 1
+    assert "Refusing to seed" in capsys.readouterr().err
+
+
 def test_bootstrap_records_an_audit_row_with_no_actor(db_session):
     """It runs outside any request, by an operator with database access, so the
     trail records the act with a null actor rather than inventing one (AUD-1)."""

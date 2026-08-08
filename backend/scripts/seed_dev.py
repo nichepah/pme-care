@@ -9,12 +9,22 @@ Prints the bearer tokens and ids the demo frontend asks for. In AUTH_FAKE_MODE
 are exactly what goes in the token fields.
 
 Idempotent: run it as often as you like, it only inserts what is missing.
+
+**Refuses to run against production.** The uids below are hard-coded in a public
+repository, so they are not secrets. They are inert while AUTH_FAKE_MODE is off —
+``dev-admin`` is not a valid Firebase ID token — but seeding them into a real
+database would leave rows that become working logins the moment somebody flipped
+that flag, with credentials anyone can read on GitHub. Use
+``scripts/bootstrap_admin.py`` for a real deployment; it creates a genuine
+identity and no password ever passes through this service.
 """
 
+import sys
 from datetime import date, timedelta
 
 from sqlalchemy import select
 
+from app.config import settings
 from app.db import SessionLocal
 from app.models import Employee, Examination, ExamStatus, FitnessStatus, User, UserRole
 
@@ -96,8 +106,31 @@ def _ensure_history(db, employees: dict[str, Employee], doctor: User) -> None:
                            remarks="Seeded history for the compliance demo."))
 
 
+def refuse_if_not_development() -> str | None:
+    """Return why seeding must not proceed, or None if it is safe.
+
+    Two independent signals, because either alone can be wrong: ENV says what
+    this deployment is *for*, AUTH_FAKE_MODE says whether these uids would
+    actually authenticate. Seeding is only safe when both agree it is a
+    development database.
+    """
+    if settings.is_production:
+        return "ENV=production"
+    if not settings.AUTH_FAKE_MODE:
+        return ("AUTH_FAKE_MODE=false, so this looks like a real deployment "
+                "(these demo uids could never sign in anyway)")
+    return None
+
+
 def run() -> None:
     """Seed the demo accounts and employees, then print what to paste where."""
+    if (reason := refuse_if_not_development()) is not None:
+        print(f"Refusing to seed demo accounts: {reason}.\n\n"
+              "These uids are published in a public repository, so they are not "
+              "secrets. Use scripts/bootstrap_admin.py to create the first real "
+              "administrator instead.", file=sys.stderr)
+        raise SystemExit(1)
+
     with SessionLocal() as db:
         accounts = _ensure_users(db)
         employees = _ensure_employees(db, accounts["dev-employee"])
