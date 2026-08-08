@@ -181,6 +181,15 @@ class Examination(Base, AuditMixin):
     """
 
     __tablename__ = "examinations"
+    __table_args__ = (
+        # "One open PME per employee" as a database rule, not a hopeful
+        # check-then-insert: two concurrent schedule requests would both pass an
+        # application-level check and leave the employee with two open exams and
+        # no single current status. Only SCHEDULED rows are covered, so an
+        # employee can accumulate any number of completed/cancelled ones.
+        Index("uq_examinations_one_open_per_employee", "employee_id", unique=True,
+              postgresql_where=text("status = 'SCHEDULED'")),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     employee_id: Mapped[uuid.UUID] = mapped_column(

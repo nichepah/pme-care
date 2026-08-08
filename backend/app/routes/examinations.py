@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import BusinessRuleError, ConflictError, CurrentUser, NotFoundError, get_current_user, require_roles
 from app.db import get_db
-from app.lookups import parse_uuid
+from app.lookups import flush_or_conflict, parse_uuid
 from app.models import STAFF_ROLES, Employee, Examination, ExamStatus, FitnessStatus, User, UserRole, record_audit
 from app.paging import PageParams, page_params, paginate
 from app.schemas import ExaminationCancel, ExaminationComplete, ExaminationCreate, ExaminationOut, Page
@@ -109,7 +109,9 @@ def schedule_examination(body: ExaminationCreate,
     exam = Examination(employee_id=employee.id, doctor_user_id=doctor.id if doctor else None,
                        scheduled_date=body.scheduled_date, created_by=user.id)
     db.add(exam)
-    db.flush()
+    # The check above is the readable path; the partial unique index reached
+    # through here is what holds when two schedule requests race.
+    flush_or_conflict(db)
     record_audit(db, user, "CREATE", "examination", exam.id)
     return exam_to_out(exam)
 

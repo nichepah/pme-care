@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import ConflictError, CurrentUser, NotFoundError, get_current_user, require_roles
 from app.db import get_db
-from app.lookups import parse_uuid, require_dev_account_mode, unique_dev_uid
+from app.lookups import flush_or_conflict, parse_uuid, require_dev_account_mode, unique_dev_uid
 from app.models import STAFF_ROLES, Employee, Examination, ExamStatus, User, UserRole, record_audit, utcnow
 from app.paging import PageParams, page_params, paginate
 from app.routes.examinations import exam_to_out
@@ -74,7 +74,12 @@ def _latest_exam_summary(db: Session, employee_id: uuid.UUID) -> ExaminationSumm
 def create_employee(body: EmployeeCreate,
                     user: CurrentUser = Depends(require_roles(UserRole.HEALTH_TEAM, UserRole.ADMIN)),
                     db: Session = Depends(get_db)) -> EmployeeOut:
-    """Register a new employee (HT-1). 409 on duplicate personal number."""
+    """Register a new employee (HT-1). 409 on duplicate personal number.
+
+    The pre-check gives the better message in the ordinary case; the partial
+    unique index behind ``flush_or_conflict`` is what actually guarantees
+    uniqueness when two registrations race.
+    """
     exists = db.execute(select(Employee).where(Employee.personal_number == body.personal_number,
                                                Employee.deleted_at.is_(None))).scalar_one_or_none()
     if exists is not None:
@@ -83,7 +88,7 @@ def create_employee(body: EmployeeCreate,
                         department=body.department, plant=body.plant,
                         contact_number=body.contact_number, email=body.email, created_by=user.id)
     db.add(employee)
-    db.flush()
+    flush_or_conflict(db)
     record_audit(db, user, "CREATE", "employee", employee.id)
     return _to_out(employee)
 
@@ -230,9 +235,14 @@ def create_employee_login(employee_id: str,
     account = User(firebase_uid=uid, email=employee.email or f"{uid}@example.local",
                    role=UserRole.EMPLOYEE, display_name=employee.full_name, created_by=user.id)
     db.add(account)
-    db.flush()
+    # Flush before reading account.id — the primary key is assigned on INSERT,
+    # so linking first would store NULL.
+    flush_or_conflict(db)
     employee.user_id = account.id
     employee.updated_by = user.id
+    # Second flush: a raced call to this endpoint collides on
+    # uq_employees_user_id rather than quietly stealing the link.
+    flush_or_conflict(db)
     record_audit(db, user, "CREATE", "user", account.id,
                  summary={"created_for_employee": str(employee.id)})
     record_audit(db, user, "UPDATE", "employee", employee.id,

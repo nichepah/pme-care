@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import ConflictError, CurrentUser, ForbiddenError, NotFoundError, require_roles
 from app.db import get_db
-from app.lookups import parse_uuid, require_dev_account_mode, unique_dev_uid
+from app.lookups import flush_or_conflict, parse_uuid, require_dev_account_mode, unique_dev_uid
 from app.models import User, UserRole, record_audit, utcnow
 from app.paging import PageParams, page_params, paginate
 from app.schemas import Page, UserCreate, UserCreatedOut, UserOut, UserUpdate
@@ -60,7 +60,7 @@ def create_user(body: UserCreate,
     account = User(firebase_uid=uid, email=body.email, role=body.role,
                    display_name=body.display_name, created_by=user.id)
     db.add(account)
-    db.flush()
+    flush_or_conflict(db)   # the e-mail pre-check above can be raced
     record_audit(db, user, "CREATE", "user", account.id, summary={"role": account.role.value})
     return UserCreatedOut(**_to_out(account).model_dump(), dev_bearer_token=uid)
 
