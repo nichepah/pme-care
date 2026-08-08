@@ -1,0 +1,96 @@
+name: CI
+
+# The suite needs a real Postgres — the schema uses CITEXT, INET, JSONB,
+# partial unique indexes and trigram indexes, so there is no portable-SQL
+# shortcut that would test what actually ships.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # A newer push makes an in-flight run for the same ref pointless.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      db:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pme
+          POSTGRES_PASSWORD: pme
+          POSTGRES_DB: pme_care
+        ports:
+          - 5432:5432
+        # Without this the first test can connect before Postgres is accepting
+        # connections, which fails as a confusing fixture error.
+        options: >-
+          --health-cmd "pg_isready -U pme -d pme_care"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # conftest.py appends _test and creates that database itself, so the
+      # value here names the server, not the database the suite writes to.
+      DATABASE_URL: postgresql+psycopg://pme:pme@localhost:5432/pme_care
+      AUTH_FAKE_MODE: "true"
+      ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Matches the Dockerfile's runtime, so CI cannot pass on a version
+          # production does not run.
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Migrations apply, reverse and re-apply cleanly
+        # Run before the tests: a migration that only works forwards is a
+        # deploy that cannot be rolled back. The suite builds its schema with
+        # create_all, so nothing else here would exercise the revisions.
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+
+      - name: Tests
+        # Includes test_schema_parity.py, which fails if the models and the
+        # migrations have drifted apart.
+        run: pytest -q
+
+  image:
+    # Proves the container builds and that alembic is on PATH in the runtime
+    # stage — the migration step of a deploy depends on it, and nothing in the
+    # test job would catch its absence.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t pme-care-api:ci backend
+
+      - name: Runtime stage has what a deploy needs
+        run: |
+          docker run --rm pme-care-api:ci python -c "import app.main; print('app imports')"
+          docker run --rm pme-care-api:ci alembic --version
+          test "$(docker run --rm pme-care-api:ci whoami)" = "appuser" \
+            && echo "runs as non-root"

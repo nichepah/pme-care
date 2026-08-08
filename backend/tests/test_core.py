@@ -12,6 +12,28 @@ def test_health_is_public(client):
     assert r.json()["status"] == "ok"
 
 
+def test_liveness_does_not_depend_on_the_database(client, monkeypatch):
+    """A database outage must not be read as "kill this container".
+
+    Restarting every instance during a Neon blip would turn a brief dependency
+    failure into an outage, and the replacements could not reach the database
+    either. Readiness reacts to the database; liveness only to the process.
+    """
+    from app.main import create_app
+
+    def unreachable(*args, **kwargs):
+        raise RuntimeError("database is down")
+
+    monkeypatch.setattr("app.routes.system.text", unreachable)
+    # raise_server_exceptions=False so the error handler's response is returned
+    # rather than re-raised, which is what a real probe would see.
+    with TestClient(create_app(), raise_server_exceptions=False) as probe:
+        assert probe.get("/api/v1/health").status_code == 500    # readiness fails...
+        live = probe.get("/api/v1/health/live")                  # ...liveness does not
+    assert live.status_code == 200
+    assert live.json()["status"] == "alive"
+
+
 def test_me_requires_token(client):
     """AUTH-2: missing credentials → 401 with the standard envelope."""
     r = client.get("/api/v1/me")

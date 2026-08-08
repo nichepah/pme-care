@@ -1,0 +1,80 @@
+# Cloud Run service definition. Apply with:
+#
+#     gcloud run services replace infra/cloudrun-service.yaml --region asia-south1
+#
+# Substitute PROJECT_ID and REGION first — this file is deliberately declarative
+# rather than a pile of gcloud flags, so what is deployed is reviewable in git.
+#
+# Migrations are NOT run by this service. `alembic upgrade head` is a separate
+# deploy step (see DEPLOYING.md): a container that migrates on boot will happily
+# migrate again on every autoscale event and during a rollback.
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: pme-care-api
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        # Neon's free tier tolerates few connections, and each instance holds
+        # its own pool. Capping instances caps total connections.
+        autoscaling.knative.dev/maxScale: "4"
+        autoscaling.knative.dev/minScale: "0"
+    spec:
+      # One request should never wait behind a slow one for long; 80 is Cloud
+      # Run's default and comfortable for an IO-bound FastAPI app.
+      containerConcurrency: 80
+      timeoutSeconds: 30
+      serviceAccountName: pme-care-api@PROJECT_ID.iam.gserviceaccount.com
+      containers:
+        - image: REGION-docker.pkg.dev/PROJECT_ID/pme-care/api:latest
+          ports:
+            - name: http1
+              containerPort: 8080
+          env:
+            - name: ENV
+              value: production            # disables /docs and /openapi.json
+            - name: AUTH_FAKE_MODE
+              value: "false"               # must never be true here
+            - name: FIREBASE_PROJECT_ID
+              value: PROJECT_ID
+            - name: ALLOWED_ORIGINS
+              value: https://pme-care.example.com
+            - name: SIGN_IN_CONTINUE_URL
+              value: https://pme-care.example.com/
+            - name: DB_POOL_SIZE
+              value: "5"
+            # The only secret. Held in Secret Manager, never in this file and
+            # never in the image — see DEPLOYING.md for creating it and granting
+            # the service account secretAccessor.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: pme-care-database-url
+                  key: latest
+          resources:
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          startupProbe:
+            # /health touches the database, so a cold start that cannot reach
+            # Neon fails loudly here instead of serving 500s.
+            httpGet:
+              path: /api/v1/health
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            # Deliberately NOT /health: a brief Neon outage would otherwise be
+            # read as "this container is broken" and restart every instance,
+            # turning a database blip into an outage of its own.
+            httpGet:
+              path: /api/v1/health/live
+            periodSeconds: 30
+            failureThreshold: 3
+  traffic:
+    - percent: 100
+      latestRevision: true

@@ -20,10 +20,28 @@ SESSION_WINDOW = timedelta(minutes=30)
 
 @router.get("/health")
 def health(db: Session = Depends(get_db)) -> dict:
-    """Liveness + database reachability (also the warm-up target)."""
+    """Readiness: this instance can serve, database included.
+
+    Use this for startup probes and load-balancer readiness. It touches the
+    database on purpose — an instance that cannot reach Postgres should not
+    receive traffic.
+    """
     db.execute(text("SELECT 1"))
     return {"status": "ok", "service": settings.APP_NAME,
             "version": settings.APP_VERSION, "env": settings.ENV}
+
+
+@router.get("/health/live")
+def liveness() -> dict:
+    """Liveness: the process is up. Deliberately does not touch the database.
+
+    A liveness probe answers "should this container be killed?", and a database
+    outage is not a reason to kill anything — restarting every instance during a
+    Neon blip turns a brief dependency failure into an outage of its own, and the
+    fresh instances cannot reach the database either. Readiness is what should
+    react to the database; that is ``/health``.
+    """
+    return {"status": "alive", "version": settings.APP_VERSION}
 
 
 @router.get("/me", response_model=MeResponse)

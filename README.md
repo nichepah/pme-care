@@ -17,19 +17,25 @@ cancel PME                 TEMPORARILY_UNFIT /
 
 ## Status
 
-The backend is a complete, tested vertical slice: 67 tests pass against a real
-Postgres, `ruff check` is clean, and the migrations round-trip up and down.
+The backend is complete and tested for what it covers: **108 tests** against a
+real Postgres, `ruff check` clean, migrations verified to apply, reverse and
+re-apply, and [CI](.github/workflows/ci.yml) running all of that plus a
+container build on every push.
 
-**Deliberately not built yet** — these are the known gaps, not oversights:
+It handles the full working cycle — register, see who is due, schedule, examine,
+record an outcome, compute the next due date — with accounts provisionable in
+production. Deployment steps are in [DEPLOYING.md](DEPLOYING.md).
+
+**Deliberately not built yet** — known gaps, not oversights:
 
 | Gap | Why it is deferred |
 | --- | --- |
-| Real Firebase account creation | Needs a Firebase project + invite/e-mail flow. Today `AUTH_FAKE_MODE` synthesizes a uid; the two endpoints that do it refuse to run with the flag off (see [Authentication](#authentication)). |
-| The full DOC-8 examination state machine | The MVP lifecycle is `SCHEDULED → COMPLETED \| CANCELLED`. The richer machine (in-progress, referred, review) needs the spec document. |
+| Notifications | Due dates are computed and queryable, but nothing *sends* anything. Needs a decision on channel (e-mail? SMS? plant noticeboard?) and a scheduler. |
+| The full DOC-8 examination state machine | The lifecycle is `SCHEDULED → COMPLETED \| CANCELLED`. The richer machine (in-progress, referred, review) needs the spec document. |
 | Parameter/EAV examination model | Vitals are flat columns (`bp_systolic`, `height_cm`, …). The target design keeps a parameter catalogue so new measurements do not need a migration. |
-| Attachments | `GCS_BUCKET` and the `google-cloud-storage` / `python-multipart` dependencies are wired for it; no endpoint uses them. |
-| React + MUI frontend | [`frontend-mvp/index.html`](frontend-mvp/index.html) is a no-build demo page, not the real UI. |
-| Reminders / due-date scheduling | Nothing computes when the next PME is due. |
+| Attachments | `GCS_BUCKET` and the `google-cloud-storage` / `python-multipart` dependencies are wired for it; no endpoint uses them. Needs retention and access-control decisions first. |
+| React + MUI frontend | [`frontend-mvp/index.html`](frontend-mvp/index.html) is a no-build demo page covering every endpoint, not the real UI. |
+| Rate limiting | Firebase verifies tokens, so this is not a credential-stuffing surface, but nothing stops an authenticated client hammering an endpoint. |
 
 > **The design documents this code cites do not exist in the repository.**
 > Docstrings reference an SRS and `API_DESIGN.md` / `DATABASE_DESIGN.md` /
@@ -123,12 +129,35 @@ revoking access is a local UPDATE rather than a token-claim change.
 
 `AUTH_FAKE_MODE=true` (development and tests only) skips verification and treats
 the bearer value *as* the `firebase_uid`, so the whole stack runs offline with no
-Firebase credentials. It also enables the two dev-only endpoints that invent a
-uid instead of creating a real Firebase account —
-`POST /users` and `POST /employees/{id}/login`. Both refuse with `422` when the
-flag is off, because an invented uid matches no Firebase account and nobody
-could ever sign in with it. Wiring real account creation is the one piece of
-production work the API surface still needs.
+Firebase credentials.
+
+**Account creation works in both modes.** [`app/provisioning.py`](backend/app/provisioning.py)
+puts one interface in front of two implementations: locally a readable uid is
+synthesized and doubles as a bearer token; in production the Firebase Admin SDK
+creates the identity with **no password** and the response carries a sign-in
+link, so the user chooses their own credential and this service never handles
+one. Routes never import `firebase_admin` themselves, which is what lets the
+production path be tested without a Firebase project — the suite stubs the SDK's
+functions on the real module.
+
+Deleting an account also disables the Firebase identity and revokes its refresh
+tokens, so a live session cannot keep minting ID tokens for other services in
+the same project.
+
+### The first administrator
+
+Every account-creating endpoint requires an authenticated admin, and a fresh
+database has none — a deadlock that would leave a new deployment unusable.
+`scripts/bootstrap_admin.py` is the way in, run once by whoever operates the
+deployment:
+
+```bash
+python -m scripts.bootstrap_admin --email ops@example.com --name "Ops Admin"
+```
+
+It refuses once an active admin exists, so it cannot quietly become a second way
+in, and it audits the act with a null actor — an operator with database access is
+not an authenticated user.
 
 ### Roles
 
@@ -153,18 +182,20 @@ All paths are prefixed with `/api/v1`.
 
 | Method | Path | Roles | Notes |
 | --- | --- | --- | --- |
-| GET | `/health` | public | Liveness + database reachability |
+| GET | `/health` | public | **Readiness**: touches the database |
+| GET | `/health/live` | public | **Liveness**: process only, never the database |
 | GET | `/me` | any | Identity; also stamps `last_login_at` and logs a `LOGIN` audit row |
-| POST | `/users` | Admin | Provision a staff account (dev-mode only) |
+| POST | `/users` | Admin | Provision a staff account |
 | GET | `/users` | Admin | Filter by `role`, `is_active` |
 | GET · PATCH · DELETE | `/users/{id}` | Admin | Rename, change role, deactivate, soft-delete |
 | POST | `/employees` | HT, Admin | 409 on duplicate personal number |
 | GET | `/employees` | staff | `q` (name or number), `department`, `plant`, `is_active` |
+| GET | `/employees/due` | staff | **The compliance worklist** — who needs booking, most overdue first. `within_days`, `overdue_only`, `department`, `plant` |
 | GET | `/employees/{id}` | any | Detail + latest examination; employee self only |
 | PATCH | `/employees/{id}` | HT, Admin | Partial update; `is_active=false` retires |
 | DELETE | `/employees/{id}` | Admin | Soft delete; 409 while a PME is open |
 | GET | `/employees/{id}/examinations` | any | History, newest first; employee self only |
-| POST | `/employees/{id}/login` | HT, Admin | Create + link a login (dev-mode only) |
+| POST | `/employees/{id}/login` | HT, Admin | Create + link a login; needs an e-mail in production |
 | POST | `/examinations` | HT, Admin | 409 if one is already open |
 | GET | `/examinations` | staff | `status`, `employee_id`, `doctor_user_id`, `scheduled_from`, `scheduled_to` |
 | GET | `/examinations/{id}` | any | Employee self only |
@@ -201,7 +232,18 @@ Rules marked *inferred* were decided without the spec documents. They are the
 places to check first if the real requirements say otherwise.
 
 - One open examination per employee. A second `SCHEDULED` PME is a 409, because
-  two open ones would make "their current status" ambiguous.
+  two open ones would make "their current status" ambiguous. This is enforced by
+  a **partial unique index**, not just an application check — two concurrent
+  requests would otherwise both pass the check.
+- **A completed examination sets when the next is due**
+  ([`app/periodicity.py`](backend/app/periodicity.py)). The doctor's explicit
+  recall date wins; otherwise the outcome's validity period, counted from the
+  examination date so a late exam does not compound the drift. An `UNFIT`
+  outcome sets **no** due date: that is a case to manage, not a booking to make,
+  and inventing a routine recall would quietly downgrade a serious finding.
+  Intervals are settings, and the computed date is *stored* — changing the
+  configuration later must not silently move dates a doctor committed to.
+  *(inferred)*
 - `COMPLETED` and `CANCELLED` are terminal. A finished PME is never reopened; a
   new one is scheduled instead, so the record of what was decided when stays
   immutable. *(inferred)*
@@ -248,27 +290,51 @@ backend/
     models.py       the whole schema, constraints and indexes included
     schemas.py      request/response models
     paging.py       the shared pagination envelope
-    lookups.py      id parsing + the dev-mode account shim
+    lookups.py      id parsing + unique-violation → 409 translation
+    provisioning.py creating/revoking identities: fake and real Firebase
+    periodicity.py  when the next examination falls due
     routes/         system, users, employees, examinations, audit
   alembic/versions/ 0001 core identity · 0002 MVP slice · 0003 constraint parity
-  tests/            one module per aggregate, plus schema parity
-  scripts/seed_dev.py
+                    0004 one open examination · 0005 periodicity
+  tests/            one module per aggregate, plus schema parity and concurrency
+  scripts/          seed_dev.py · bootstrap_admin.py
 frontend-mvp/       no-build demo page
-infra/              docker-compose for local Postgres (+ optional API container)
+infra/              docker-compose for local Postgres · Cloud Run service
+.github/workflows/  CI
 ```
 
 ## Deployment
 
-Targets Cloud Run + Neon. The `Dockerfile` builds a two-stage, non-root image
-that serves with a single uvicorn worker — Cloud Run handles concurrency, and one
-worker per instance keeps memory inside the free tier. A small connection pool
-with `pool_pre_ping` survives Neon's free-tier auto-suspend.
+**Full runbook: [DEPLOYING.md](DEPLOYING.md).** Cloud Run + Neon, declared in
+[`infra/cloudrun-service.yaml`](infra/cloudrun-service.yaml) so what is deployed
+is reviewable in git rather than living in shell history.
+
+The short version: the `Dockerfile` builds a two-stage, non-root image serving
+with a single uvicorn worker — Cloud Run handles concurrency, and one worker per
+instance keeps memory in the free tier. A small pool with `pool_pre_ping`
+survives Neon's auto-suspend, and `maxScale: 4` caps how many pools exist at
+once, because each instance holds its own.
 
 Migrations are never run by the serving container: `alembic upgrade head` is an
-explicit deploy step, so a restart can never silently alter the schema.
+explicit deploy step. A container that migrates on boot migrates again on every
+autoscale event, and during a rollback it would migrate *forward* while you are
+trying to go back. Revisions are additive — nullable columns, partial indexes —
+so the previous image keeps working against the new schema and a traffic
+rollback alone is usually enough.
 
-Before going to production: set `ENV=production` (which disables `/docs` **and**
-`/openapi.json` — the schema is the part that enumerates every route and field),
-set `AUTH_FAKE_MODE=false`, set `ALLOWED_ORIGINS` to the real frontend origin,
-provide `FIREBASE_PROJECT_ID` with credentials available to the Admin SDK, and
-implement real Firebase account creation for the two dev-only endpoints.
+`ENV=production` disables `/docs` **and** `/openapi.json`; the schema is the part
+that enumerates every route and field, so hiding only the UI hides nothing.
+
+## Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and
+pull request:
+
+- `ruff check`
+- migrations **up, down, then up again** — a migration that only works forwards
+  is a deploy that cannot be rolled back, and the suite would never catch it
+  because it builds its schema with `create_all`
+- the full test suite, including the schema-parity check
+- a container build, asserting `app` imports, `alembic` is on `PATH` in the
+  runtime stage, and the image runs as `appuser` — the deploy's migration step
+  depends on all three, and no test would notice their absence
