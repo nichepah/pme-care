@@ -143,6 +143,27 @@ def list_employees(q: str | None = Query(None, max_length=100,
     return paginate(db, stmt.order_by(Employee.full_name, Employee.id), params, _to_out)
 
 
+@router.get("/me", response_model=EmployeeStatus)
+def get_my_employee_record(user: CurrentUser = Depends(get_current_user),
+                           db: Session = Depends(get_db)) -> EmployeeStatus:
+    """The caller's own employee record and latest examination (EMP-2, EMP-5).
+
+    Without this an employee's own app could not find its data: ``/me`` returns
+    the *user* id, and the employee id is a different key it has no way to
+    discover — asking the person to type it would be both absurd and a way to
+    probe for other people's records.
+
+    404 for a staff account, which has no employee record. Declared before
+    ``/{employee_id}`` so "me" is not parsed as an id.
+    """
+    employee = db.execute(select(Employee).where(Employee.user_id == user.id,
+                                                 Employee.deleted_at.is_(None))).scalar_one_or_none()
+    if employee is None:
+        raise NotFoundError("You do not have an employee record.")
+    return EmployeeStatus(**_to_out(employee).model_dump(),
+                          latest_examination=_latest_exam_summary(db, employee.id))
+
+
 @router.get("/due", response_model=Page[EmployeeDue])
 def list_employees_due(within_days: int | None = Query(
                            None, ge=0, le=365,

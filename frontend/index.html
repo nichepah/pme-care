@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<!--
+  PME Care — the application.
+
+  No build step: native ES modules, so this is real code organisation with no
+  toolchain. Serve the folder with any static server, or let the backend serve it
+  (see README) to avoid CORS entirely.
+
+  The API base URL is derived from this page's hostname, port 8080. Override it by
+  setting window.PME_API_BASE before app.js loads — that is the one hook a
+  different deployment needs.
+
+  frontend-mvp/ is the older endpoint-by-endpoint console. It is kept because it
+  is still the quickest way to poke a single endpoint by hand; this is what users
+  get.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light dark" />
+<title>PME Care</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header id="header"><div class="brand">PME Care</div></header>
+  <main id="app">
+    <p class="empty">Loading…</p>
+  </main>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

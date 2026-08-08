@@ -80,6 +80,34 @@ def test_request_id_is_echoed_back(client):
     assert r.headers["X-Request-ID"] == "req_from-client"
 
 
+def test_frontend_is_served_from_this_process(client):
+    """Serving the UI same-origin is what removes CORS from the picture — no
+    allowlist to keep in step with wherever the UI happens to be hosted."""
+    page = client.get("/")
+    assert page.status_code == 200
+    assert "PME Care" in page.text
+    assert client.get("/js/app.js").status_code == 200
+
+
+def test_the_frontend_mount_does_not_shadow_the_api(client, make_user, auth):
+    """The static mount is at "/", so a mistake here would swallow every route."""
+    assert client.get("/api/v1/health").status_code == 200
+    doc = make_user(role=UserRole.DOCTOR, uid="doc-static")
+    assert client.get("/api/v1/me", headers=auth(doc)).status_code == 200
+
+
+def test_api_only_deployment_is_valid(monkeypatch):
+    """A missing frontend directory must not stop the API from starting — an
+    API-only deployment is a legitimate configuration, not a failure."""
+    from app.config import settings
+    from app.main import create_app
+
+    monkeypatch.setattr(settings, "FRONTEND_DIR", "/nonexistent-frontend")
+    with TestClient(create_app()) as api_only:
+        assert api_only.get("/api/v1/health").status_code == 200
+        assert api_only.get("/").status_code == 404
+
+
 def test_api_surface_is_hidden_in_production(monkeypatch):
     """The schema enumerates every route and field, so production serves
     neither it nor the docs page — hiding only the UI would hide nothing."""

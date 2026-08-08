@@ -9,11 +9,13 @@ import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.auth import AppError, init_firebase
 from app.config import settings
@@ -109,7 +111,29 @@ def create_app() -> FastAPI:
     app.include_router(employees_router, prefix=settings.API_PREFIX)
     app.include_router(examinations_router, prefix=settings.API_PREFIX)
     app.include_router(audit_router, prefix=settings.API_PREFIX)
+    _mount_frontend(app)
     return app
+
+
+def _mount_frontend(app: FastAPI) -> None:
+    """Serve the SPA from this process, if its directory is present.
+
+    Same-origin serving means no CORS at all — no preflights, no allowlist to keep
+    in step with wherever the UI is hosted, and no chance of a deployment that
+    works until someone opens it on a different hostname. For a single local
+    server, which is how this is deployed, one process serving both is also one
+    fewer thing to start and supervise.
+
+    Mounted last so it can never shadow an API route, and skipped silently when
+    the directory is absent — an API-only deployment is a valid configuration.
+    """
+    directory = Path(settings.FRONTEND_DIR)
+    if not directory.is_dir():
+        logger.info("No frontend at %s; serving the API only.", directory)
+        return
+    # html=True serves index.html for "/", which is all the hash-routed SPA needs.
+    app.mount("/", StaticFiles(directory=directory, html=True), name="frontend")
+    logger.info("Serving the frontend from %s", directory)
 
 
 app = create_app()

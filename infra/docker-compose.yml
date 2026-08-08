@@ -33,7 +33,10 @@ services:
       retries: 20
 
   api:
-    build: ../backend
+    build:
+      # Context is the repo root so the image carries the frontend too.
+      context: ..
+      dockerfile: backend/Dockerfile
     depends_on:
       db:
         condition: service_healthy

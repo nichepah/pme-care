@@ -53,6 +53,56 @@ def test_employee_role_cannot_list(client, make_user, auth):
     assert client.get("/api/v1/employees", headers=auth(emp)).status_code == 403
 
 
+def test_employee_can_find_their_own_record_without_knowing_its_id(client, make_user, register, auth):
+    """EMP-5: an employee's own app has only their token, not their employee id.
+
+    ``/me`` returns the *user* id, which is a different key — so without this
+    endpoint the app would have to ask the person to type an id they have no way
+    of knowing, and any id they typed would be a probe for someone else's record.
+    """
+    ht = make_user(role=UserRole.HEALTH_TEAM, uid="ht-self")
+    employee = register(client, ht, "P-SELF", full_name="Self Server")
+    token = client.post(f"/api/v1/employees/{employee['id']}/login",
+                        headers=auth(ht)).json()["dev_bearer_token"]
+
+    mine = client.get("/api/v1/employees/me", headers=auth(token))
+    assert mine.status_code == 200, mine.text
+    assert mine.json()["id"] == employee["id"]
+    assert mine.json()["personal_number"] == "P-SELF"
+    assert "latest_examination" in mine.json()
+
+
+def test_staff_have_no_employee_record(client, make_user, auth):
+    """A doctor is not an employee of the PME programme, so there is nothing to
+    return — 404 rather than an empty object the UI would have to special-case."""
+    doc = make_user(role=UserRole.DOCTOR, uid="doc-self")
+    r = client.get("/api/v1/employees/me", headers=auth(doc))
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "NOT_FOUND"
+
+
+def test_me_is_not_mistaken_for_an_employee_id(client, make_user, register, auth):
+    """``/employees/me`` must not be routed as ``/employees/{id}``."""
+    ht = make_user(role=UserRole.HEALTH_TEAM, uid="ht-self2")
+    register(client, ht, "P-SELF2")
+    # A Health Team user has no employee record, so this proves routing, not data.
+    assert client.get("/api/v1/employees/me", headers=auth(ht)).status_code == 404
+
+
+def test_soft_deleted_employee_has_no_self_record(client, make_user, register, auth):
+    """After deletion the record is gone from the employee's own view too."""
+    admin = make_user(role=UserRole.ADMIN, uid="adm-self")
+    employee = register(client, admin, "P-SELF3", email="self3@example.com")
+    token = client.post(f"/api/v1/employees/{employee['id']}/login",
+                        headers=auth(admin)).json()["dev_bearer_token"]
+    assert client.get("/api/v1/employees/me", headers=auth(token)).status_code == 200
+
+    client.delete(f"/api/v1/employees/{employee['id']}", headers=auth(admin))
+    # The login is deactivated by the delete, so this is now a 401 rather than a
+    # 404 — either way the record is unreachable.
+    assert client.get("/api/v1/employees/me", headers=auth(token)).status_code == 401
+
+
 def test_patch_changes_only_the_fields_sent(client, make_user, register, auth):
     """HT-1: a partial update leaves everything it did not mention alone."""
     ht = make_user(role=UserRole.HEALTH_TEAM, uid="ht-p1")

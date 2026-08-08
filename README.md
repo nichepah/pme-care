@@ -17,7 +17,7 @@ cancel PME                 TEMPORARILY_UNFIT /
 
 ## Status
 
-The backend is complete and tested for what it covers: **108 tests** against a
+The backend is complete and tested for what it covers: **116 tests** against a
 real Postgres, `ruff check` clean, migrations verified to apply, reverse and
 re-apply, and [CI](.github/workflows/ci.yml) running all of that plus a
 container build on every push.
@@ -34,7 +34,7 @@ production. Deployment steps are in [DEPLOYING.md](DEPLOYING.md).
 | The full DOC-8 examination state machine | The lifecycle is `SCHEDULED → COMPLETED \| CANCELLED`. The richer machine (in-progress, referred, review) needs the spec document. |
 | Parameter/EAV examination model | Vitals are flat columns (`bp_systolic`, `height_cm`, …). The target design keeps a parameter catalogue so new measurements do not need a migration. |
 | Attachments | `GCS_BUCKET` and the `google-cloud-storage` / `python-multipart` dependencies are wired for it; no endpoint uses them. Needs retention and access-control decisions first. |
-| React + MUI frontend | [`frontend-mvp/index.html`](frontend-mvp/index.html) is a no-build demo page covering every endpoint, not the real UI. |
+| Firebase web sign-in | The backend verifies ID tokens; the *browser* side that obtains one is not wired. In development the token is typed or picked from seeded accounts. `signInWithFirebase` in [`session.js`](frontend/js/session.js) is the seam, and throws rather than pretending. |
 | Rate limiting | Firebase verifies tokens, so this is not a credential-stuffing surface, but nothing stops an authenticated client hammering an endpoint. |
 
 > **The design documents this code cites do not exist in the repository.**
@@ -61,6 +61,9 @@ cp .env.example .env          # defaults already point at the compose database
 # 3. Serve
 .venv/bin/uvicorn app.main:app --port 8080 --reload
 ```
+
+Then open **<http://localhost:8080>** — the backend serves the interface itself,
+so there is nothing else to start and no CORS to configure.
 
 Interactive API docs: <http://localhost:8080/docs> (disabled when `ENV=production`).
 
@@ -90,12 +93,44 @@ password in the test-database URL passed here and failed in CI.
 Stop it later with `$PGBIN/pg_ctl -D "$PGDATA" stop`; delete `$PGDATA` to
 discard it entirely. Then continue from step 2 above.
 
-For the clickable demo UI, serve `frontend-mvp/` on the port that matches
-`ALLOWED_ORIGINS`:
+## The interface
 
-```bash
-cd frontend-mvp && python3 -m http.server 5173   # then open http://localhost:5173
-```
+[`frontend/`](frontend/) is the application, served by the backend at `/`. No
+build step — native ES modules, so it is real code organisation with no
+toolchain, and deploying it is copying files.
+
+**Each role lands on the thing its job starts with**, and sees nothing else. The
+route table in [`js/app.js`](frontend/js/app.js) *is* that decision, in one
+readable place:
+
+| Role | Lands on | Can also reach | Deliberately cannot |
+| --- | --- | --- | --- |
+| **Employee** | **My status** — am I fit, when is my next examination, my history | nothing else | any list, anyone else's record, their own id |
+| **Doctor** | **Examinations to do** — worklist → the examination form, with the person's previous readings beside it | — | registering employees, cancelling, accounts, the audit trail |
+| **Health Team** | **Who is due** — overdue / due-soon counts, then the list, with *Book today* on each row | Employees (search, register, amend, give a login), Booked (cancel) | recording a clinical decision, accounts, the audit trail |
+| **Admin** | **Who is due** — everything the Health Team has | Accounts (create, deactivate), Audit trail | deactivating or deleting their own account |
+
+Two things that shaped it:
+
+- **The Health Team lands on compliance, not on a search box.** Their job is not
+  "look someone up", it is "make sure nobody has lapsed" — so the first screen is
+  who has, and booking happens inline. Making someone copy an id into a separate
+  form is how a worklist stops getting worked.
+- **A doctor sees the previous readings beside the form**, not behind a click. A
+  fitness decision is a judgement about a trend, and navigating away to find the
+  last blood pressure is how the trend gets ignored.
+
+The nav is built from the same table that guards the routes, so a role is never
+offered a page it would be refused — but that is tidiness, not security. Every
+rule is enforced again by the API, because anything in a browser can be edited.
+
+Employee names and clinical remarks reach the DOM only through `textContent`;
+there is no `innerHTML` with interpolated data anywhere in the app.
+
+[`frontend-mvp/`](frontend-mvp/) is the older endpoint-by-endpoint console. It is
+kept because it is still the quickest way to poke one endpoint by hand, but it is
+a debugging tool — it shows all four roles at once with editable tokens, which no
+real user should ever see.
 
 ### Tests
 

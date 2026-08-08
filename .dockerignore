@@ -1,0 +1,18 @@
+# Build context is the repository root (see backend/Dockerfile). Keep it small
+# and free of anything machine-specific or secret.
+.git/
+.github/
+backend/.venv/
+backend/venv/
+**/__pycache__/
+**/*.py[cod]
+backend/.pytest_cache/
+backend/.ruff_cache/
+backend/tests/
+backend/scripts/
+frontend-mvp/
+infra/
+*.md
+.env
+.env.*
+!backend/.env.example

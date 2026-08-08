@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     # window the Health Team books from.
     PME_DUE_SOON_DAYS: int = 30
 
+    # Directory of the built frontend, served at "/" when present. Relative to
+    # the backend working directory; blank or missing means API-only.
+    FRONTEND_DIR: str = "../frontend"
+
+    # Only needed when the UI is served from a *different* origin than the API.
+    # Serving both from this process (the default) makes CORS irrelevant.
     ALLOWED_ORIGINS: str = "http://localhost:5173"  # comma-separated
     GCS_BUCKET: str = "pme-care-attachments"
 
