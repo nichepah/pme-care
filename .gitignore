@@ -1,0 +1,23 @@
+# Secrets and per-machine configuration. .env.example is the committed template.
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Service-account keys — a Firebase or GCP key must never reach the repo.
+*-serviceaccount.json
+serviceAccountKey.json
+*.pem
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

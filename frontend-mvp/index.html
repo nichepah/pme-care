@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<!--
+  Demo UI for the PME Care API. No build step, no npm — plain HTML + fetch, so
+  the whole backend is clickable today. This is NOT the real frontend (that is
+  React + MUI per UI_DESIGN.md, built once the API surface has settled); it
+  exists to exercise every endpoint by hand and to show what the flow feels
+  like end to end.
+
+  Setup:
+      cd backend && python -m scripts.seed_dev     # prints the demo tokens
+      cd frontend-mvp && python3 -m http.server 5173
+
+  Then open http://localhost:5173 — that port matches the default
+  ALLOWED_ORIGINS in backend/.env.example.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PME Care — API demo</title>
+<style>
+  :root {
+    --line: #d8dce3; --ink: #1f2328; --muted: #5a6472; --bg: #ffffff;
+    --panel: #f7f8fa; --accent: #0b6b5f; --danger: #a3271f; --ok: #1a6b2f;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, sans-serif; color: var(--ink);
+         background: var(--bg); margin: 0; padding: 1.5rem; line-height: 1.45; }
+  main { max-width: 60rem; margin: 0 auto; }
+  h1 { font-size: 1.35rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1rem; margin: 0 0 0.75rem; }
+  p.lede { color: var(--muted); margin: 0 0 1.5rem; }
+  section { border: 1px solid var(--line); border-radius: 10px; padding: 1rem;
+            margin-bottom: 1rem; background: var(--bg); }
+  .role { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em;
+          color: var(--accent); font-weight: 700; }
+  label { display: block; font-size: 0.8rem; color: var(--muted); margin-top: 0.6rem; }
+  input, select, textarea { width: 100%; padding: 0.4rem 0.5rem; margin-top: 0.15rem;
+    border: 1px solid var(--line); border-radius: 6px; font: inherit; background: var(--bg);
+    color: var(--ink); }
+  button { margin-top: 0.8rem; margin-right: 0.4rem; padding: 0.45rem 0.9rem; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--panel);
+    font: inherit; color: var(--ink); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.small { margin: 0; padding: 0.2rem 0.5rem; font-size: 0.8rem; }
+  .row { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+  .row > div { flex: 1 1 8rem; }
+  pre { background: var(--panel); border: 1px solid var(--line); padding: 0.6rem;
+        border-radius: 6px; overflow-x: auto; font-size: 0.78rem; margin: 0.8rem 0 0;
+        white-space: pre-wrap; word-break: break-word; }
+  pre:empty { display: none; }
+  table { width: 100%; border-collapse: collapse; margin-top: 0.8rem; font-size: 0.82rem; }
+  th, td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--line);
+           vertical-align: middle; }
+  th { color: var(--muted); font-weight: 600; font-size: 0.72rem; text-transform: uppercase; }
+  td.id { font-family: ui-monospace, monospace; font-size: 0.72rem; }
+  .tag { display: inline-block; padding: 0.05rem 0.4rem; border-radius: 999px;
+         font-size: 0.7rem; border: 1px solid var(--line); }
+  .ok { color: var(--ok); } .bad { color: var(--danger); }
+  .note { background: #fffbe6; border: 1px solid #f0dfa0; border-radius: 6px;
+          padding: 0.6rem; font-size: 0.82rem; margin: 0.8rem 0 0; }
+  .empty { color: var(--muted); font-size: 0.82rem; margin-top: 0.8rem; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>PME Care — API demo</h1>
+<p class="lede">
+  Each panel acts as a different logged-in role. Run
+  <code>python -m scripts.seed_dev</code> in <code>backend/</code> first — the tokens below are
+  the ones it prints. In <code>AUTH_FAKE_MODE</code> a bearer token <em>is</em> the Firebase uid,
+  which is why these are plain strings.
+</p>
+
+<section>
+  <h2>Session</h2>
+  <div class="row">
+    <div><label>Health Team token</label><input id="tok-ht" value="dev-healthteam" /></div>
+    <div><label>Doctor token</label><input id="tok-doc" value="dev-doctor" /></div>
+  </div>
+  <div class="row">
+    <div><label>Employee token</label><input id="tok-emp" value="dev-employee" /></div>
+    <div><label>Admin token</label><input id="tok-adm" value="dev-admin" /></div>
+  </div>
+  <button onclick="whoAmI()">Check all four tokens</button>
+  <pre id="out-session"></pre>
+</section>
+
+<section>
+  <span class="role">Health Team</span>
+  <h2>1 · Register an employee</h2>
+  <div class="row">
+    <div><label>Personal number</label><input id="emp-pn" value="P1001" /></div>
+    <div><label>Full name</label><input id="emp-name" value="Test Employee" /></div>
+  </div>
+  <div class="row">
+    <div><label>Department</label><input id="emp-dept" value="Foundry" /></div>
+    <div><label>Plant</label><input id="emp-plant" value="Plant 2" /></div>
+    <div><label>Contact number</label><input id="emp-contact" value="9990001111" /></div>
+  </div>
+  <button class="primary" onclick="registerEmployee()">Register</button>
+  <p class="note">
+    Register the same personal number twice to see a <code>409 CONFLICT</code>. A newly
+    registered employee has no login yet — use <strong>Give login</strong> in the search
+    results below to create one, which then fills in the Employee panel.
+  </p>
+  <pre id="out-register"></pre>
+</section>
+
+<section>
+  <span class="role">Health Team · Doctor · Admin</span>
+  <h2>2 · Find employees</h2>
+  <div class="row">
+    <div><label>Search name or number</label><input id="q" placeholder="e.g. Test, or P10" /></div>
+    <div><label>Department</label><input id="f-dept" placeholder="any" /></div>
+    <div><label>Active</label>
+      <select id="f-active">
+        <option value="">Active only (default)</option>
+        <option value="false">Retired only</option>
+      </select>
+    </div>
+    <div><label>Page size</label><input id="f-size" type="number" value="10" min="1" max="100" /></div>
+  </div>
+  <button onclick="searchEmployees()">Search</button>
+  <div id="tbl-employees"></div>
+  <pre id="out-employees"></pre>
+</section>
+
+<section>
+  <span class="role">Health Team</span>
+  <h2>3 · Schedule an examination</h2>
+  <div class="row">
+    <div><label>Employee id</label><input id="sched-emp-id" /></div>
+    <div><label>Scheduled date</label><input id="sched-date" type="date" /></div>
+    <div><label>Assign doctor (optional user id)</label><input id="sched-doc-id" placeholder="blank = unassigned" /></div>
+  </div>
+  <button class="primary" onclick="scheduleExam()">Schedule</button>
+  <p class="note">
+    An employee may have only one open PME at a time — scheduling a second one is a
+    <code>409</code>. Cancel the open one first, from the worklist below.
+  </p>
+  <pre id="out-schedule"></pre>
+</section>
+
+<section>
+  <span class="role">Health Team · Doctor · Admin</span>
+  <h2>4 · Worklist</h2>
+  <div class="row">
+    <div><label>Status</label>
+      <select id="w-status">
+        <option value="SCHEDULED">Scheduled</option>
+        <option value="COMPLETED">Completed</option>
+        <option value="CANCELLED">Cancelled</option>
+        <option value="">Any</option>
+      </select>
+    </div>
+    <div><label>From date</label><input id="w-from" type="date" /></div>
+    <div><label>To date</label><input id="w-to" type="date" /></div>
+  </div>
+  <button onclick="loadWorklist()">Load worklist</button>
+  <div id="tbl-worklist"></div>
+  <pre id="out-worklist"></pre>
+</section>
+
+<section>
+  <span class="role">Doctor</span>
+  <h2>5 · Record the outcome</h2>
+  <label>Examination id</label>
+  <input id="complete-id" />
+  <div class="row">
+    <div><label>Fitness decision</label>
+      <select id="fitness">
+        <option value="FIT">Fit</option>
+        <option value="TEMPORARILY_UNFIT">Temporarily unfit</option>
+        <option value="UNFIT">Unfit</option>
+      </select>
+    </div>
+    <div><label>BP systolic</label><input id="bp-sys" placeholder="120" /></div>
+    <div><label>BP diastolic</label><input id="bp-dia" placeholder="80" /></div>
+    <div><label>Height (cm)</label><input id="height" placeholder="172" /></div>
+    <div><label>Weight (kg)</label><input id="weight" placeholder="70" /></div>
+  </div>
+  <label>Remarks — required for anything other than Fit</label>
+  <textarea id="remarks" rows="2"></textarea>
+  <button class="primary" onclick="completeExam()">Complete examination</button>
+  <pre id="out-complete"></pre>
+</section>
+
+<section>
+  <span class="role">Employee</span>
+  <h2>6 · My status and history</h2>
+  <label>My employee id</label>
+  <input id="my-emp-id" />
+  <button class="primary" onclick="viewStatus()">View my status</button>
+  <button onclick="viewHistory()">View my history</button>
+  <p class="note">
+    Try another employee's id with this token: the answer is <code>404</code>, not
+    <code>403</code> — a 403 would confirm that the other record exists.
+  </p>
+  <div id="tbl-history"></div>
+  <pre id="out-status"></pre>
+</section>
+
+<section>
+  <span class="role">Admin</span>
+  <h2>7 · Accounts</h2>
+  <div class="row">
+    <div><label>E-mail</label><input id="u-email" value="new.doctor@example.com" /></div>
+    <div><label>Display name</label><input id="u-name" value="Dr New" /></div>
+    <div><label>Role</label>
+      <select id="u-role">
+        <option value="DOCTOR">Doctor</option>
+        <option value="HEALTH_TEAM">Health Team</option>
+        <option value="ADMIN">Admin</option>
+      </select>
+    </div>
+  </div>
+  <button class="primary" onclick="createUser()">Create account</button>
+  <button onclick="loadUsers()">List accounts</button>
+  <div id="tbl-users"></div>
+  <pre id="out-users"></pre>
+</section>
+
+<section>
+  <span class="role">Admin</span>
+  <h2>8 · Audit trail</h2>
+  <div class="row">
+    <div><label>Entity type</label>
+      <select id="a-entity">
+        <option value="">Everything</option>
+        <option value="employee">employee</option>
+        <option value="examination">examination</option>
+        <option value="user">user</option>
+      </select>
+    </div>
+    <div><label>Entity id (optional)</label><input id="a-entity-id" /></div>
+  </div>
+  <button onclick="loadAudit()">Load trail</button>
+  <p class="note">
+    The trail records which fields changed, never the values — no blood pressure and no
+    diagnosis text ever appears here.
+  </p>
+  <div id="tbl-audit"></div>
+  <pre id="out-audit"></pre>
+</section>
+
+<script>
+const API = "http://localhost:8080/api/v1";
+
+const el = (id) => document.getElementById(id);
+const token = (which) => el(`tok-${which}`).value.trim();
+
+/** Call the API and return {status, body}; never throws on a non-2xx. */
+async function call(path, which, options = {}) {
+  const res = await fetch(API + path, {
+    ...options,
+    headers: {
+      "Authorization": "Bearer " + token(which),
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+  const body = await res.json().catch(() => ({}));
+  return { status: res.status, body, ok: res.ok };
+}
+
+/** Show a result, leading with the status code and any error message. */
+function show(target, { status, body, ok }) {
+  const head = ok ? `${status} OK` : `${status} ${body?.error?.code || "ERROR"}`;
+  const detail = body?.error
+    ? `${body.error.message}\n${JSON.stringify(body.error.details || [], null, 2)}`
+    : JSON.stringify(body, null, 2);
+  el(target).innerHTML =
+    `<strong class="${ok ? "ok" : "bad"}">${head}</strong>\n` +
+    detail.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+
+/** Render a page envelope as a table; columns is [[header, rowFn], ...]. */
+function table(target, page, columns) {
+  if (!page?.items) { el(target).innerHTML = ""; return; }
+  if (!page.items.length) {
+    el(target).innerHTML = `<p class="empty">No matching rows.</p>`;
+    return;
+  }
+  const head = columns.map(([h]) => `<th>${h}</th>`).join("");
+  const rows = page.items.map((item) =>
+    `<tr>${columns.map(([, cell]) => `<td>${cell(item)}</td>`).join("")}</tr>`).join("");
+  el(target).innerHTML =
+    `<table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>
+     <p class="empty">Showing ${page.items.length} of ${page.total} — page ${page.page}, size ${page.size}.</p>`;
+}
+
+const short = (id) => `<span class="id">${(id || "").slice(0, 8)}…</span>`;
+const tag = (text) => `<span class="tag">${text ?? "—"}</span>`;
+
+// --- Session ---------------------------------------------------------------
+
+async function whoAmI() {
+  const lines = [];
+  for (const [which, label] of [["ht", "Health Team"], ["doc", "Doctor"],
+                                ["emp", "Employee"], ["adm", "Admin"]]) {
+    const { status, body } = await call("/me", which);
+    lines.push(status === 200
+      ? `${label.padEnd(12)} ${status} → ${body.role} (${body.display_name})`
+      : `${label.padEnd(12)} ${status} → ${body?.error?.code || "failed"}`);
+  }
+  el("out-session").textContent = lines.join("\n");
+}
+
+// --- Employees -------------------------------------------------------------
+
+async function registerEmployee() {
+  const result = await call("/employees", "ht", {
+    method: "POST",
+    body: JSON.stringify({
+      personal_number: el("emp-pn").value,
+      full_name: el("emp-name").value,
+      department: el("emp-dept").value,
+      plant: el("emp-plant").value,
+      contact_number: el("emp-contact").value,
+    }),
+  });
+  show("out-register", result);
+  if (result.status === 201) {
+    el("sched-emp-id").value = result.body.id;
+    el("q").value = result.body.personal_number;
+    searchEmployees();
+  }
+}
+
+async function searchEmployees() {
+  const params = new URLSearchParams({ size: el("f-size").value || "10" });
+  if (el("q").value.trim()) params.set("q", el("q").value.trim());
+  if (el("f-dept").value.trim()) params.set("department", el("f-dept").value.trim());
+  if (el("f-active").value) params.set("is_active", el("f-active").value);
+
+  const result = await call(`/employees?${params}`, "ht");
+  if (!result.ok) { show("out-employees", result); el("tbl-employees").innerHTML = ""; return; }
+  el("out-employees").innerHTML = "";
+  table("tbl-employees", result.body, [
+    ["Number", (e) => e.personal_number],
+    ["Name", (e) => e.full_name],
+    ["Department", (e) => e.department],
+    ["Active", (e) => (e.is_active ? tag("yes") : tag("retired"))],
+    ["Id", (e) => short(e.id)],
+    ["", (e) => `
+      <button class="small" onclick="useEmployee('${e.id}')">Use</button>
+      <button class="small" onclick="giveLogin('${e.id}')">Give login</button>`],
+  ]);
+}
+
+/** Copy an employee id into the panels that need one. */
+function useEmployee(id) {
+  el("sched-emp-id").value = id;
+  el("my-emp-id").value = id;
+  el("a-entity-id").value = id;
+}
+
+async function giveLogin(id) {
+  const result = await call(`/employees/${id}/login`, "ht", { method: "POST" });
+  show("out-employees", result);
+  if (result.status === 201) {
+    el("tok-emp").value = result.body.dev_bearer_token;
+    el("my-emp-id").value = id;
+  }
+}
+
+// --- Examinations ----------------------------------------------------------
+
+async function scheduleExam() {
+  const payload = {
+    employee_id: el("sched-emp-id").value,
+    scheduled_date: el("sched-date").value,
+  };
+  if (el("sched-doc-id").value.trim()) payload.doctor_user_id = el("sched-doc-id").value.trim();
+
+  const result = await call("/examinations", "ht", { method: "POST", body: JSON.stringify(payload) });
+  show("out-schedule", result);
+  if (result.status === 201) {
+    el("complete-id").value = result.body.id;
+    loadWorklist();
+  }
+}
+
+async function loadWorklist() {
+  const params = new URLSearchParams({ size: "20" });
+  if (el("w-status").value) params.set("status", el("w-status").value);
+  if (el("w-from").value) params.set("scheduled_from", el("w-from").value);
+  if (el("w-to").value) params.set("scheduled_to", el("w-to").value);
+
+  const result = await call(`/examinations?${params}`, "ht");
+  if (!result.ok) { show("out-worklist", result); el("tbl-worklist").innerHTML = ""; return; }
+  el("out-worklist").innerHTML = "";
+  table("tbl-worklist", result.body, [
+    ["Scheduled", (x) => x.scheduled_date],
+    ["Status", (x) => tag(x.status)],
+    ["Outcome", (x) => tag(x.fitness_status)],
+    ["Employee", (x) => short(x.employee_id)],
+    ["Exam id", (x) => short(x.id)],
+    ["", (x) => x.status === "SCHEDULED"
+      ? `<button class="small" onclick="el('complete-id').value='${x.id}'">Complete</button>
+         <button class="small" onclick="cancelExam('${x.id}')">Cancel</button>`
+      : ""],
+  ]);
+}
+
+async function cancelExam(id) {
+  const reason = prompt("Why is this examination being cancelled?");
+  if (reason === null) return;   // dismissed; an empty string is sent on purpose
+  const result = await call(`/examinations/${id}/cancel`, "ht", {
+    method: "POST", body: JSON.stringify({ reason }),
+  });
+  show("out-worklist", result);
+  if (result.ok) loadWorklist();
+}
+
+async function completeExam() {
+  const number = (id) => {
+    const raw = el(id).value.trim();
+    return raw === "" ? null : Number(raw);
+  };
+  const result = await call(`/examinations/${el("complete-id").value}/complete`, "doc", {
+    method: "POST",
+    body: JSON.stringify({
+      fitness_status: el("fitness").value,
+      bp_systolic: number("bp-sys"),
+      bp_diastolic: number("bp-dia"),
+      height_cm: number("height"),
+      weight_kg: number("weight"),
+      remarks: el("remarks").value.trim() || null,
+    }),
+  });
+  show("out-complete", result);
+  if (result.ok) loadWorklist();
+}
+
+// --- Employee self-service -------------------------------------------------
+
+async function viewStatus() {
+  show("out-status", await call(`/employees/${el("my-emp-id").value}`, "emp"));
+}
+
+async function viewHistory() {
+  const result = await call(`/employees/${el("my-emp-id").value}/examinations`, "emp");
+  if (!result.ok) { show("out-status", result); el("tbl-history").innerHTML = ""; return; }
+  el("out-status").innerHTML = "";
+  table("tbl-history", result.body, [
+    ["Scheduled", (x) => x.scheduled_date],
+    ["Examined", (x) => x.exam_date ?? "—"],
+    ["Status", (x) => tag(x.status)],
+    ["Outcome", (x) => tag(x.fitness_status)],
+    ["Remarks", (x) => x.remarks ?? x.cancel_reason ?? "—"],
+  ]);
+}
+
+// --- Admin -----------------------------------------------------------------
+
+async function createUser() {
+  const result = await call("/users", "adm", {
+    method: "POST",
+    body: JSON.stringify({
+      email: el("u-email").value,
+      display_name: el("u-name").value,
+      role: el("u-role").value,
+    }),
+  });
+  show("out-users", result);
+  if (result.status === 201) {
+    if (result.body.role === "DOCTOR") el("tok-doc").value = result.body.dev_bearer_token;
+    if (result.body.role === "HEALTH_TEAM") el("tok-ht").value = result.body.dev_bearer_token;
+    loadUsers();
+  }
+}
+
+async function loadUsers() {
+  const result = await call("/users?size=25", "adm");
+  if (!result.ok) { show("out-users", result); el("tbl-users").innerHTML = ""; return; }
+  el("out-users").innerHTML = "";
+  table("tbl-users", result.body, [
+    ["Name", (u) => u.display_name],
+    ["E-mail", (u) => u.email],
+    ["Role", (u) => tag(u.role)],
+    ["Active", (u) => (u.is_active ? tag("yes") : tag("no"))],
+    ["Last login", (u) => (u.last_login_at ? u.last_login_at.slice(0, 16).replace("T", " ") : "never")],
+    ["", (u) => `<button class="small" onclick="setActive('${u.id}', ${!u.is_active})">
+                   ${u.is_active ? "Deactivate" : "Reactivate"}</button>
+                 <button class="small" onclick="useDoctor('${u.id}')">Assign</button>`],
+  ]);
+}
+
+async function setActive(id, isActive) {
+  const result = await call(`/users/${id}`, "adm", {
+    method: "PATCH", body: JSON.stringify({ is_active: isActive }),
+  });
+  show("out-users", result);
+  if (result.ok) loadUsers();
+}
+
+/** Put a user id into the "assign doctor" field of the scheduling panel. */
+function useDoctor(id) {
+  el("sched-doc-id").value = id;
+}
+
+async function loadAudit() {
+  const params = new URLSearchParams({ size: "25" });
+  if (el("a-entity").value) params.set("entity_type", el("a-entity").value);
+  if (el("a-entity-id").value.trim()) params.set("entity_id", el("a-entity-id").value.trim());
+
+  const result = await call(`/audit-logs?${params}`, "adm");
+  if (!result.ok) { show("out-audit", result); el("tbl-audit").innerHTML = ""; return; }
+  el("out-audit").innerHTML = "";
+  table("tbl-audit", result.body, [
+    ["When", (r) => r.created_at.slice(0, 19).replace("T", " ")],
+    ["Actor", (r) => tag(r.actor_role)],
+    ["Action", (r) => r.action],
+    ["Entity", (r) => `${r.entity_type} ${short(r.entity_id)}`],
+    ["Summary", (r) => (r.summary ? JSON.stringify(r.summary) : "—")],
+  ]);
+}
+
+el("sched-date").value = new Date().toISOString().slice(0, 10);
+</script>
+</main>
+</body>
+</html>

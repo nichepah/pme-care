@@ -1,0 +1,56 @@
+# Local development stack. The test suite only needs `db`:
+#
+#     docker compose -f infra/docker-compose.yml up -d db
+#
+# `api` is optional and mainly useful for checking the container image builds
+# and boots the same way Cloud Run will:
+#
+#     docker compose -f infra/docker-compose.yml up --build api
+#
+# Nothing here is production configuration — Cloud Run + Neon is the target,
+# and the credentials below are deliberately trivial because this database only
+# ever holds test data.
+
+name: pme-care
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: pme
+      POSTGRES_PASSWORD: pme
+      POSTGRES_DB: pme_care
+    ports:
+      - "5432:5432"
+    volumes:
+      - pme-db-data:/var/lib/postgresql/data
+    healthcheck:
+      # `api` waits for this, and so should you before running pytest against a
+      # freshly started stack.
+      test: ["CMD-SHELL", "pg_isready -U pme -d pme_care"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: ../backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ENV: development
+      # `db` is the service name on the compose network, not localhost.
+      DATABASE_URL: postgresql+psycopg://pme:pme@db:5432/pme_care
+      AUTH_FAKE_MODE: "true"
+      ALLOWED_ORIGINS: http://localhost:5173
+      PORT: "8080"
+    ports:
+      - "8080:8080"
+    # The image's CMD only serves; migrations stay an explicit step so a
+    # container restart can never silently alter the schema.
+    command: >
+      sh -c "alembic upgrade head &&
+             exec uvicorn app.main:app --host 0.0.0.0 --port 8080 --workers 1"
+
+volumes:
+  pme-db-data:

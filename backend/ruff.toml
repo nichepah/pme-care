@@ -1,0 +1,33 @@
+# Lint/format rules for the backend. Kept in one file so `ruff check .` in CI
+# and in an editor agree without further configuration.
+
+line-length = 118          # matches the wrapping the codebase already uses
+target-version = "py312"   # the Dockerfile's runtime
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # import sorting
+    "UP",   # pyupgrade — keep to modern syntax for the pinned Python
+    "B",    # bugbear: likely bugs rather than style
+    "C4",   # comprehension simplifications
+    "D",    # docstrings: every module/class/function here has one, keep it that way
+]
+ignore = [
+    # Only the D1xx "a docstring must exist" rules are enforced. The pydocstyle
+    # *formatting* rules are dropped on purpose: this codebase wraps a summary
+    # over several lines and closes on the same line, which reads better for the
+    # "why" comments it favours, and reformatting every docstring to satisfy a
+    # linter would be churn with no reader benefit.
+    "D203", "D205", "D209", "D212", "D213", "D400", "D401", "D404", "D415",
+    "B008",  # FastAPI's Depends()/Query() defaults are the framework's idiom
+]
+
+[lint.per-file-ignores]
+# Tests document behaviour in their docstrings; missing ones there are not
+# worth failing a build over, and fixtures are legitimately re-imported locally.
+"tests/*" = ["D100", "D103"]
+# Alembic revisions are generated stubs with module docstrings only.
+"alembic/versions/*" = ["D103"]

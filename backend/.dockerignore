@@ -1,0 +1,12 @@
+# Keep the build context small and free of anything machine-specific.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+tests/
+scripts/
+.env
+.env.*
+!.env.example
