@@ -66,7 +66,10 @@ def _redirect_to_test_database() -> None:
     finally:
         admin.dispose()
 
-    settings.DATABASE_URL = str(url.set(database=target))
+    # render_as_string(hide_password=False), never str(): SQLAlchemy's __str__
+    # redacts the password to "***", which would be carried through as a literal
+    # password and fail authentication.
+    settings.DATABASE_URL = url.set(database=target).render_as_string(hide_password=False)
 
 
 _redirect_to_test_database()

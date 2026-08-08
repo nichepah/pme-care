@@ -73,14 +73,19 @@ user-owned cluster needs no root at all and works with the default `.env`:
 PGBIN=/usr/lib/postgresql/16/bin              # adjust the version if needed
 PGDATA=$HOME/.local/share/pme-care/pgdata
 
-$PGBIN/initdb -D "$PGDATA" -U pme --auth=trust
+$PGBIN/initdb -D "$PGDATA" -U pme --auth=scram-sha-256 --pwfile=<(echo pme)
 # The default socket directory /var/run/postgresql needs root, so keep the
 # socket inside the cluster instead:
 echo "unix_socket_directories = '$PGDATA'" >> "$PGDATA/postgresql.conf"
 
 $PGBIN/pg_ctl -D "$PGDATA" -l "$PGDATA/server.log" start
-psql -h 127.0.0.1 -U pme -d postgres -c "CREATE DATABASE pme_care"
+PGPASSWORD=pme psql -h 127.0.0.1 -U pme -d postgres -c "CREATE DATABASE pme_care"
 ```
+
+Use real password authentication, not `--auth=trust`. Trust accepts *any*
+password, which makes a local cluster more permissive than CI or production and
+will happily hide a credential-handling bug — that is exactly how a redacted
+password in the test-database URL passed here and failed in CI.
 
 Stop it later with `$PGBIN/pg_ctl -D "$PGDATA" stop`; delete `$PGDATA` to
 discard it entirely. Then continue from step 2 above.

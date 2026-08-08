@@ -43,7 +43,8 @@ def migrated_url() -> str:
     except ProgrammingError as exc:  # e.g. a Neon role without CREATEDB
         pytest.skip(f"cannot create a scratch database: {exc}")
 
-    scratch_url = str(url.set(database=scratch))
+    # Not str(url) — that redacts the password to "***". See conftest.py.
+    scratch_url = url.set(database=scratch).render_as_string(hide_password=False)
     original = settings.DATABASE_URL
     try:
         # alembic/env.py reads the URL off the settings singleton.
@@ -97,6 +98,24 @@ def test_migrated_schema_matches_the_models(migrated_url):
                 f"{table}.{aspect} differs between migrations and models: "
                 f"only in migrations={from_migrations[table][aspect] - from_models[table][aspect]}, "
                 f"only in models={from_models[table][aspect] - from_migrations[table][aspect]}")
+
+
+def test_derived_urls_keep_their_password():
+    """Deriving a database URL must not redact the credential.
+
+    ``str()`` on a SQLAlchemy URL renders the password as ``***``, so anything
+    that builds a URL that way ends up authenticating with a literal ``***``.
+    Both ``conftest.py`` and this module derive URLs, and a cluster configured
+    with trust authentication would accept the broken value — hiding the bug
+    everywhere except where passwords are actually checked.
+    """
+    url = make_url("postgresql+psycopg://pme:s3cret@localhost:5432/pme_care")
+    assert "***" in str(url), "if this ever changes, the warning below is moot"
+    assert "s3cret" in url.render_as_string(hide_password=False)
+
+    for module_url in (settings.DATABASE_URL, str(db_module.engine.url.render_as_string(
+            hide_password=False))):
+        assert "***" not in module_url, "a redacted password reached a live URL"
 
 
 def test_every_model_table_is_in_the_migrated_schema(migrated_url):
