@@ -15,6 +15,12 @@ cancel PME                 TEMPORARILY_UNFIT /
                            UNFIT + remarks)     ->    view own status + history
 ```
 
+**Install and try it:** [Getting started](#getting-started) →
+[Your first five minutes](#your-first-five-minutes).
+**Run it for real:** [Setting up a real deployment](#setting-up-a-real-deployment).
+**Understand it:** [The interface](#the-interface) · [Authentication](#authentication) ·
+[API](#api) · [Business rules](#business-rules).
+
 ## Status
 
 The backend is complete and tested for what it covers: **116 tests** against a
@@ -45,27 +51,94 @@ production. Deployment steps are in [DEPLOYING.md](DEPLOYING.md).
 
 ## Getting started
 
-Requires Python 3.12+ and Docker (or any reachable Postgres 14+).
+Needs **Python 3.12+** and **Postgres 14+**. If you have Docker, step 1 gets you
+the database; if you do not, use [a user-owned cluster](#no-docker-no-daemon-or-no-root-to-start-one)
+instead — it needs no root and the rest is identical.
 
 ```bash
 # 1. Database
 docker compose -f infra/docker-compose.yml up -d db
 
-# 2. Backend
+# 2. Install
 cd backend
-python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-cp .env.example .env          # defaults already point at the compose database
-.venv/bin/alembic upgrade head
-.venv/bin/python -m scripts.seed_dev      # prints one bearer token per role
+python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+cp .env.example .env          # defaults already point at the database from step 1
 
-# 3. Serve
+# 3. Initialize — create the schema, then demo accounts and data
+.venv/bin/alembic upgrade head
+.venv/bin/python -m scripts.seed_dev
+
+# 4. Run
 .venv/bin/uvicorn app.main:app --port 8080 --reload
 ```
 
-Then open **<http://localhost:8080>** — the backend serves the interface itself,
-so there is nothing else to start and no CORS to configure.
+Open **<http://localhost:8080>**. The backend serves the interface itself, so
+there is nothing else to start and no CORS to configure.
+
+Step 3 is the initialization: `alembic upgrade head` builds the schema (safe to
+re-run — it applies only what is missing), and `seed_dev` creates one account per
+role plus four employees with enough history that the compliance list has
+something in it. It is idempotent, and it **refuses to run** against a production
+database.
 
 Interactive API docs: <http://localhost:8080/docs> (disabled when `ENV=production`).
+
+### Your first five minutes
+
+Sign in on the front page by clicking a role — no password, because
+`AUTH_FAKE_MODE` is on locally and the token *is* the account's id. This walks the
+whole cycle:
+
+**1. Sign in as Health Team.** You land on **Who is due**, which is the job: three
+counts across the top, then the people behind them. The seed data gives you one
+employee well overdue (`DEV-003`), one due shortly (`DEV-004`), and two never
+examined — the three cases the list has to distinguish.
+
+**2. Book one.** Press **Book today** on any row. They disappear from the list —
+they have been dealt with. That is the list answering "who still needs booking?",
+not "who exists".
+
+**3. Sign out, sign in as Doctor.** **Examinations to do** now shows what you just
+booked. Press **Examine**. The form is on the left, the person's previous readings
+on the right, so a decision is made against the trend.
+
+**4. Record an outcome.** Choose **Unfit** and submit with the remarks box empty —
+it is refused, because an outcome with consequences has to be explained. Add
+remarks, or switch to **Fit**, and submit. A next-due date is set automatically:
+a year out for Fit, three months for Temporarily unfit, and *none* for Unfit,
+which is a case to manage rather than a routine recall.
+
+**5. Sign in as Employee.** One screen: your standing in large type, your details,
+your history. Nothing else — no lists, no other people.
+
+Then, as **Admin**, open **Audit trail** and see every step you just took recorded
+with which fields changed — and no blood pressure or diagnosis text, because
+clinical values never enter the trail.
+
+### Setting up a real deployment
+
+The steps above give you a demo. A real deployment differs in three ways:
+
+1. **Set `ENV=production` and `AUTH_FAKE_MODE=false`** in `.env`. This turns on
+   real Firebase token verification and disables `/docs` and `/openapi.json`.
+2. **Do not run `seed_dev`.** Its accounts are published in this repository, so
+   they are not secrets; the script refuses in production for that reason.
+3. **Create the first administrator** — a fresh database has none, and every
+   account-creating endpoint requires one:
+
+   ```bash
+   .venv/bin/python -m scripts.bootstrap_admin \
+       --email you@yourplant.com --name "Your Name"
+   ```
+
+   It creates a real Firebase identity with **no password** and prints a sign-in
+   link. Everyone else is created by that admin from **Accounts** in the UI.
+
+Full runbook, including systemd and TLS: **[DEPLOYING.md](DEPLOYING.md)**.
+
+> **Before real users:** Firebase *web* sign-in is not wired up yet, so there is
+> no way for someone to obtain a token from a browser. See
+> [Status](#status). Everything else works.
 
 ### No Docker? (no daemon, or no root to start one)
 
