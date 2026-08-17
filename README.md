@@ -61,7 +61,10 @@ docker compose -f infra/docker-compose.yml up -d db
 
 # 2. Install
 cd backend
-python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+# Name the version explicitly. A venv built with bare `python3` links to
+# /usr/bin/python3, so a system upgrade silently detaches it from its own
+# site-packages and every import fails. 3.12 is what the Dockerfile and CI use.
+python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 cp .env.example .env          # defaults already point at the database from step 1
 
 # 3. Initialize — create the schema, then demo accounts and data
