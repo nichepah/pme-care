@@ -169,6 +169,22 @@ password in the test-database URL passed here and failed in CI.
 Stop it later with `$PGBIN/pg_ctl -D "$PGDATA" stop`; delete `$PGDATA` to
 discard it entirely. Then continue from step 2 above.
 
+### Presenting it
+
+`PME-Care.pptx` at the repository root is a twelve-slide walkthrough — the
+problem, each role's screen, the rules the software enforces, and the decisions
+still outstanding. Regenerate it after the figures change:
+
+```bash
+pip install --target /tmp/pptxlibs python-pptx
+PYTHONPATH=/tmp/pptxlibs python docs/build_deck.py
+```
+
+[`docs/build_deck.py`](docs/build_deck.py) holds the quoted figures in one dict at
+the top, so they can be corrected in one place rather than hunted through slides.
+Screenshots live in [`docs/screenshots/`](docs/screenshots/) and are captures of
+the running app, not mockups.
+
 ## The interface
 
 [`frontend/`](frontend/) is the application, served by the backend at `/`. No
