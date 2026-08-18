@@ -9,7 +9,6 @@ backend/venv/
 backend/.pytest_cache/
 backend/.ruff_cache/
 backend/tests/
-backend/scripts/
 frontend-mvp/
 infra/
 *.md

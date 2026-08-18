@@ -136,3 +136,7 @@ jobs:
           docker run --rm pme-care-api:ci test -f /app/frontend/index.html \
             && echo "frontend shipped"
           docker run --rm pme-care-api:ci test -f /app/frontend/js/app.js
+          # scripts/ must ship too, or a deployment with no separate machine
+          # (a hosted platform's shell, or a pre-deploy hook) has no way to seed
+          # demo data or create the first admin from inside the container.
+          docker run --rm pme-care-api:ci python -c "import scripts.seed_dev; import scripts.bootstrap_admin; print('scripts import')"

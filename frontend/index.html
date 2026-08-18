@@ -6,9 +6,9 @@
   toolchain. Serve the folder with any static server, or let the backend serve it
   (see README) to avoid CORS entirely.
 
-  The API base URL is derived from this page's hostname, port 8080. Override it by
-  setting window.PME_API_BASE before app.js loads — that is the one hook a
-  different deployment needs.
+  The API base URL defaults to this page's own origin. Override it by setting
+  window.PME_API_BASE before app.js loads — that is the one hook a split-host
+  deployment needs.
 
   frontend-mvp/ is the older endpoint-by-endpoint console. It is kept because it
   is still the quickest way to poke a single endpoint by hand; this is what users
@@ -23,6 +23,7 @@
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <div id="demo-banner"></div>
   <header id="header"><div class="brand">PME Care</div></header>
   <main id="app">
     <p class="empty">Loading…</p>

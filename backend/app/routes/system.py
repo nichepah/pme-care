@@ -28,7 +28,12 @@ def health(db: Session = Depends(get_db)) -> dict:
     """
     db.execute(text("SELECT 1"))
     return {"status": "ok", "service": settings.APP_NAME,
-            "version": settings.APP_VERSION, "env": settings.ENV}
+            "version": settings.APP_VERSION, "env": settings.ENV,
+            # The interface reads this to decide whether to show the demo
+            # banner. Reported by the server rather than configured in the
+            # browser, so a demo instance cannot be made to look like a real one
+            # by editing the page.
+            "demo": settings.is_demo}
 
 
 @router.get("/health/live")

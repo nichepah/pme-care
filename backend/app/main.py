@@ -54,14 +54,16 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     """Build and wire the FastAPI application."""
-    # In production all three of these are off: serving the OpenAPI schema
-    # while hiding the Swagger page only hides the UI — the schema is the part
-    # that enumerates every route and field. Generate clients from a
-    # non-production deployment instead.
+    # Off in production AND in a public demo: serving the OpenAPI schema while
+    # hiding the Swagger page only hides the UI — the schema is the part that
+    # enumerates every route and field. A demo instance has no other gate in
+    # front of it, so there is no reason to hand a stranger the map. Generate
+    # clients from a non-production, non-demo deployment instead.
+    hide_api_surface = settings.is_production or settings.is_demo
     app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION,
                   lifespan=lifespan,
-                  docs_url=None if settings.is_production else "/docs",
-                  openapi_url=None if settings.is_production else "/openapi.json",
+                  docs_url=None if hide_api_surface else "/docs",
+                  openapi_url=None if hide_api_surface else "/openapi.json",
                   redoc_url=None)
 
     app.add_middleware(CORSMiddleware, allow_origins=settings.allowed_origins_list,
