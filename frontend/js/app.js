@@ -15,6 +15,7 @@
  * the nav simply stops offering what would be refused anyway.
  */
 
+import { checkHealth } from "./api.js";
 import { clearSession, getUser, restoreSession } from "./session.js";
 import { defineRoutes, navigate, start, visibleRoutes } from "./router.js";
 import { el, render } from "./ui.js";
@@ -83,11 +84,31 @@ function renderNav() {
     ]));
 }
 
+/**
+ * Show the demo banner on every screen, not just the login page.
+ *
+ * The login screen's own notice (js/views/login.js) is the one chance to stop
+ * someone before they click anything; this is the reminder for someone already
+ * signed in and clicking around that what they're looking at still isn't real.
+ * Driven by the server's `/health.demo` field, never a flag the browser could
+ * be talked out of.
+ */
+async function showDemoBannerIfApplicable() {
+  const health = await checkHealth();
+  if (!health.demo) return;
+  const banner = document.getElementById("demo-banner");
+  banner.textContent = "Demo — invented data only. Anyone with this link can "
+    + "sign in as any role. Nothing shown here is real.";
+  banner.classList.add("visible");
+}
+
 async function boot() {
   const mount = document.getElementById("app");
   // Resume a session before the first route runs, so a reload does not bounce
-  // the user back to the login screen.
-  await restoreSession();
+  // the user back to the login screen. Runs alongside the banner check rather
+  // than after it — neither depends on the other, and a slow /health should
+  // not delay getting the signed-in user to their screen.
+  await Promise.all([restoreSession(), showDemoBannerIfApplicable()]);
   start(mount, renderNav);
 }
 

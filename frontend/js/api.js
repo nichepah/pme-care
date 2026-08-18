@@ -7,9 +7,19 @@
 
 import { clearSession, getToken } from "./session.js";
 
-/** Base URL of the API. Same-origin when the backend serves this app. */
+/**
+ * Base URL of the API.
+ *
+ * Defaults to same-origin — this app is normally served by the same process
+ * that answers the API (see `_mount_frontend` in app/main.py), so the right
+ * default is "wherever this page came from," not a hard-coded port. A forced
+ * ":8080" here broke every deployment that doesn't expose that exact port
+ * (Render, Fly, a Cloudflare Tunnel, ...), even though the backend was already
+ * designed to serve both from one origin. Split-host deployments still work
+ * via the explicit override.
+ */
 export const API_BASE =
-  window.PME_API_BASE ?? `${window.location.protocol}//${window.location.hostname}:8080/api/v1`;
+  window.PME_API_BASE ?? `${window.location.protocol}//${window.location.host}/api/v1`;
 
 /** Raised for any non-2xx response, carrying the parsed error envelope. */
 export class ApiError extends Error {
@@ -53,6 +63,23 @@ async function request(method, path, body) {
     window.location.hash = "#/login";
   }
   throw new ApiError(response.status, payload);
+}
+
+let healthCheck = null;
+
+/**
+ * What environment this is, straight from the server — never guessed from the
+ * browser. Memoized: the login screen and the boot-time demo banner both need
+ * this, and it should be one network call per page load, not two.
+ *
+ * @returns {Promise<{reachable: boolean, env?: string, demo?: boolean}>}
+ */
+export function checkHealth() {
+  healthCheck ??= fetch(`${API_BASE}/health`)
+    .then((r) => r.json())
+    .then((body) => ({ reachable: true, env: body.env, demo: Boolean(body.demo) }))
+    .catch(() => ({ reachable: false }));
+  return healthCheck;
 }
 
 /** Build a query string, omitting empty values so filters can be passed blank. */

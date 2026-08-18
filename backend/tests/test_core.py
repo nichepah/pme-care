@@ -119,3 +119,16 @@ def test_api_surface_is_hidden_in_production(monkeypatch):
         assert production_client.get("/docs").status_code == 404
         assert production_client.get("/openapi.json").status_code == 404
         assert production_client.get("/api/v1/health").status_code == 200
+
+
+def test_api_surface_is_hidden_in_demo_mode_too(monkeypatch):
+    """A public demo has no other gate in front of it, so it gets the same
+    treatment as production — there is no reason to hand a stranger the map."""
+    from app.config import settings
+    from app.main import create_app
+
+    monkeypatch.setattr(settings, "ENV", "demo")
+    with TestClient(create_app()) as demo_client:
+        assert demo_client.get("/docs").status_code == 404
+        assert demo_client.get("/openapi.json").status_code == 404
+        assert demo_client.get("/api/v1/health").status_code == 200
