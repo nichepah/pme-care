@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    ENV: str = "development"                      # development | production | test
+    ENV: str = "development"                      # development | demo | production | test
     APP_NAME: str = "PME Care API"
     APP_VERSION: str = "1.1.0"
     API_PREFIX: str = "/api/v1"
@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     # Neon pooled URL in production; docker-compose Postgres locally.
     DATABASE_URL: str = "postgresql+psycopg://pme:pme@localhost:5432/pme_care"
     DB_POOL_SIZE: int = 5                          # FT-2: small pool per instance
+
+    # A publicly reachable instance holding no real data. Because Firebase web
+    # sign-in is not wired yet, such an instance must run with AUTH_FAKE_MODE on
+    # — and those tokens are published in this repository, so anyone can sign in
+    # as any role. That is acceptable for a demonstration and catastrophic for
+    # anything else, so the instance says so on every screen rather than relying
+    # on whoever deployed it to remember.
+    DEMO_MODE: bool = False
 
     FIREBASE_PROJECT_ID: str = "pme-care-dev"
     AUTH_FAKE_MODE: bool = False                   # dev/test only: token == uid
@@ -45,6 +53,11 @@ class Settings(BaseSettings):
     def allowed_origins_list(self) -> list[str]:
         """ALLOWED_ORIGINS parsed to a list."""
         return [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]
+
+    @property
+    def is_demo(self) -> bool:
+        """True for a throwaway public instance (ENV=demo or DEMO_MODE=true)."""
+        return self.DEMO_MODE or self.ENV == "demo"
 
     @property
     def is_production(self) -> bool:
