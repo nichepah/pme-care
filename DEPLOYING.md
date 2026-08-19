@@ -264,6 +264,18 @@ The last three matter. `ENV=production` is what turns off the API schema, and
 `/api/v1/me` returning 401 rather than 200 is how you know `AUTH_FAKE_MODE` is
 genuinely off — with it on, any string would be accepted as a uid.
 
+For a fuller check that also drives the actual rendered page — the demo banner,
+a real sign-in, whether it scrolls sideways on a phone — none of which a status
+code can prove:
+
+```bash
+pip install websocket-client   # scripts/verify_deployment.py's only extra dependency
+python scripts/verify_deployment.py "$URL"
+```
+
+It reports pass/fail per check and exits non-zero on any failure, so it works
+equally as a manual gate today or a pipeline step later.
+
 ## Rolling back
 
 ```bash
